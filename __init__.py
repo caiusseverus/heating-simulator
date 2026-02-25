@@ -100,6 +100,12 @@ PLATFORMS = [Platform.SENSOR, Platform.NUMBER, Platform.SWITCH]
 
 _RESET_SERVICE_SCHEMA = vol.Schema(
     {
+        # Add target keys injected by the frontend
+        vol.Optional("device_id"): vol.Any(str, [str]),
+        vol.Optional("entity_id"): vol.Any(str, [str]),
+        vol.Optional("area_id"): vol.Any(str, [str]),
+        
+        # Existing parameters
         vol.Optional("preset"): vol.In(
             [PRESET_COLD_START, PRESET_OVERNIGHT, PRESET_ROOM_TEMPERATURE]
         ),
@@ -121,18 +127,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.async_on_unload(entry.add_update_listener(_async_update_options))
 
     async def _handle_reset(call) -> None:
-        """Handle the reset_model service call.
-
-        If one or more devices are targeted, resolve device_id → entry_id and
-        apply only to those instances. If no target is given, apply to all
-        loaded instances.
-        """
+        """Handle the reset_model service call."""
         target_entry_ids: set[str] | None = None
+        
+        # Extract target devices from the service call data
+        target_devices = call.data.get("device_id")
 
-        if call.device_ids:
+        if target_devices:
+            # Normalize to a list to handle both single and multiple selections
+            if isinstance(target_devices, str):
+                target_devices = [target_devices]
+                
             dev_reg = dr.async_get(hass)
             target_entry_ids = set()
-            for device_id in call.device_ids:
+            for device_id in target_devices:
                 device = dev_reg.async_get(device_id)
                 if device is None:
                     continue
