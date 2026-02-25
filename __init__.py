@@ -14,6 +14,7 @@ from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_interval,
 )
+from homeassistant.helpers import device_registry as dr
 
 from .const import (
     DOMAIN,
@@ -119,18 +120,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await simulator.async_start()
     entry.async_on_unload(entry.add_update_listener(_async_update_options))
 
-    # Register the reset action once per domain (idempotent — HA ignores duplicate
-    # registrations of the same service name, so this is safe with multiple entries).
     async def _handle_reset(call) -> None:
-        """Handle the reset_model service call — applies to all loaded instances."""
-        for sim in hass.data[DOMAIN].values():
-            sim.reset_model(
-                t_room=call.data.get("t_room"),
-                t_fabric=call.data.get("t_fabric"),
-                t_rad=call.data.get("t_rad"),
-                preset=call.data.get("preset"),
-            )
+        """Handle the reset_model service call.
 
+        If one or more devices are targeted, resolve device_id → entry_id and
+        apply only to those instances. If no target is given, apply to all
+        loaded instances.
+        """
+        target_entry_ids: set[str] | None = None
+
+        if call.device_ids:
+            dev_reg = dr.async_get(hass)
+            target_entry_ids = set()
+            for device_id in call.device_ids:
+                device = dev_reg.async_get(device_id)
+                if device is None:
+                    continue
+                # Each simulator device has exactly one config entry
+                for entry_id in device.config_entries:
+                    if entry_id in hass.data[DOMAIN]:
+                        target_entry_ids.add(entry_id)
+
+        for entry_id, sim in hass.data[DOMAIN].items():
+            if target_entry_ids is None or entry_id in target_entry_ids:
+                sim.reset_model(
+                    t_room=call.data.get("t_room"),
+                    t_fabric=call.data.get("t_fabric"),
+                    t_rad=call.data.get("t_rad"),
+                    preset=call.data.get("preset"),
+                )
+
+    # Register once per domain — safe to call on each entry load because of the guard
     if not hass.services.has_service(DOMAIN, ACTION_RESET):
         hass.services.async_register(
             DOMAIN,

@@ -1,5 +1,6 @@
 reset_model:
   name: Reset thermal model
+  target: true
   description: >
     Reset the thermal simulation to a known state. All fields are optional and can
     be combined freely. Use a preset for named starting conditions, explicit temperature
