@@ -1,0 +1,67 @@
+reset_model:
+  name: Reset thermal model
+  description: >
+    Reset the thermal simulation to a known state. All fields are optional and can
+    be combined freely. Use a preset for named starting conditions, explicit temperature
+    fields for arbitrary states, or omit everything to reset to the configured
+    initial_temperature with all nodes at the same value.
+  target:
+    device:
+      integration: heating_simulator
+  fields:
+    preset:
+      name: Preset
+      description: >
+        Named starting condition. Any explicit temperature field takes priority over
+        the corresponding preset value.
+        cold_start: all nodes at current external temperature (heating off for days).
+        overnight: room 16 C, fabric 14 C - heating off overnight in a reasonably insulated house.
+        room_temperature: room 18 C, fabric 17 C - typical occupied room after sustained heating.
+      required: false
+      selector:
+        select:
+          options:
+            - cold_start
+            - overnight
+            - room_temperature
+    t_room:
+      name: Room temperature
+      description: >
+        Set room/air node to an arbitrary temperature (degrees C). Takes priority over preset.
+        Use alone to simulate any starting condition - fabric and radiator will default
+        to the same value (fully equilibrated). Example: 21.5 to test cooling behaviour
+        from a warm room.
+      required: false
+      selector:
+        number:
+          min: -10
+          max: 40
+          step: 0.1
+          unit_of_measurement: "°C"
+    t_fabric:
+      name: Fabric temperature
+      description: >
+        Set building fabric temperature (degrees C) independently of the air node. Applies to
+        R2C2 models only; ignored by Simple and plain Radiator models. Defaults to t_room
+        if not specified. Set lower than t_room to simulate fabric that has not yet caught
+        up with a recently heated room; set equal for a fully equilibrated start.
+      required: false
+      selector:
+        number:
+          min: -10
+          max: 40
+          step: 0.1
+          unit_of_measurement: "°C"
+    t_rad:
+      name: Radiator temperature
+      description: >
+        Set radiator water temperature (degrees C). Applies to radiator models only; ignored by
+        Simple and R2C2 models. Defaults to t_room (cold radiator) if not specified.
+        Set to flow_temperature to simulate a hot radiator at the start of a heating period.
+      required: false
+      selector:
+        number:
+          min: -10
+          max: 90
+          step: 0.1
+          unit_of_measurement: "°C"

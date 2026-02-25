@@ -129,3 +129,24 @@ DEFAULT_FLOW_RATE_MAX = 0.05     # kg/s  (~3 L/min)
 DEFAULT_HEAT_LOSS_COEFF_RAD = 50.0
 DEFAULT_C_ROOM_RAD = 500_000.0   # J/°C  (air + all room contents, same definition as c_air)
 DEFAULT_PIPE_DELAY = 0.0         # seconds
+
+# ---------------------------------------------------------------------------
+# Reset action
+# ---------------------------------------------------------------------------
+ACTION_RESET = "reset_model"
+
+PRESET_COLD_START       = "cold_start"       # all nodes at external temp — heating off for days
+PRESET_OVERNIGHT        = "overnight"        # air 16°C, fabric 14°C — heating off overnight
+PRESET_ROOM_TEMPERATURE = "room_temperature" # air 18°C, fabric 17°C — typical occupied room
+
+# Fabric lags air due to high thermal mass:
+#   cold_start:       fabric = external temp (fully equilibrated over days)
+#   overnight:        air 16°C, fabric 14°C — fabric only partially cooled in ~8 h
+#   room_temperature: air 18°C, fabric 17°C — fabric nearly at air temp after sustained heating
+#
+# t_room=None in cold_start means "use current external_temperature at reset time".
+RESET_PRESETS: dict[str, dict] = {
+    PRESET_COLD_START:       {"t_room": None, "t_fabric": None},
+    PRESET_OVERNIGHT:        {"t_room": 16.0, "t_fabric": 14.0},
+    PRESET_ROOM_TEMPERATURE: {"t_room": 18.0, "t_fabric": 17.0},
+}
