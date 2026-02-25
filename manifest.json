@@ -1,0 +1,11 @@
+{
+  "domain": "heating_simulator",
+  "name": "Heating Simulator",
+  "version": "1.0.0",
+  "documentation": "https://github.com/your-repo/heating-simulator",
+  "description": "A thermal heating simulator for testing thermostats and heating control systems.",
+  "config_flow": true,
+  "iot_class": "local_push",
+  "codeowners": [],
+  "requirements": []
+}
