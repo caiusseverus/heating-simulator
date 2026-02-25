@@ -1,11 +1,13 @@
 reset_model:
   name: Reset thermal model
-  target: true
   description: >
     Reset the thermal simulation to a known state. All fields are optional and can
     be combined freely. Use a preset for named starting conditions, explicit temperature
     fields for arbitrary states, or omit everything to reset to the configured
     initial_temperature with all nodes at the same value.
+  target:
+    device:
+      integration: heating_simulator
   fields:
     preset:
       name: Preset
