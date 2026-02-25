@@ -346,105 +346,105 @@ class HeatingSimulator:
             self.model.t_rad = t_rad
             _LOGGER.debug("Restored radiator temperature: %.2f°C", t_rad)
 
-def reset_model(
-    self,
-    t_room: float | None = None,
-    t_fabric: float | None = None,
-    t_rad: float | None = None,
-    preset: str | None = None,
-) -> None:
-    """
-    Reset all model state variables to known values.
+    def reset_model(
+        self,
+        t_room: float | None = None,
+        t_fabric: float | None = None,
+        t_rad: float | None = None,
+        preset: str | None = None,
+    ) -> None:
+        """
+        Reset all model state variables to known values.
 
-    Priority: explicit t_room/t_fabric/t_rad args > preset > configured initial_temp.
-    For cold_start preset, t_room defaults to the current external temperature.
-    Unspecified fabric and radiator temperatures default to the resolved t_room,
-    giving a fully equilibrated starting condition.
-    """
-    # Resolve preset defaults first, then let explicit args override
-    p_room: float | None = None
-    p_fabric: float | None = None
+        Priority: explicit t_room/t_fabric/t_rad args > preset > configured initial_temp.
+        For cold_start preset, t_room defaults to the current external temperature.
+        Unspecified fabric and radiator temperatures default to the resolved t_room,
+        giving a fully equilibrated starting condition.
+        """
+        # Resolve preset defaults first, then let explicit args override
+        p_room: float | None = None
+        p_fabric: float | None = None
 
-    if preset and preset in RESET_PRESETS:
-        p = RESET_PRESETS[preset]
-        p_room = p["t_room"]     # None means "use T_ext" (cold_start)
-        p_fabric = p["t_fabric"]
+        if preset and preset in RESET_PRESETS:
+            p = RESET_PRESETS[preset]
+            p_room = p["t_room"]     # None means "use T_ext" (cold_start)
+            p_fabric = p["t_fabric"]
 
-    # Resolve final room temperature
-    if t_room is not None:
-        final_room = t_room
-    elif p_room is not None:
-        final_room = p_room
-    elif preset == PRESET_COLD_START:
-        # cold_start with no explicit t_room: equilibrate to current external temp
-        final_room = self.model.external_temperature
-    else:
-        final_room = float(self.config.get(CONF_INITIAL_TEMP, DEFAULT_INITIAL_TEMP))
+        # Resolve final room temperature
+        if t_room is not None:
+            final_room = t_room
+        elif p_room is not None:
+            final_room = p_room
+        elif preset == PRESET_COLD_START:
+            # cold_start with no explicit t_room: equilibrate to current external temp
+            final_room = self.model.external_temperature
+        else:
+            final_room = float(self.config.get(CONF_INITIAL_TEMP, DEFAULT_INITIAL_TEMP))
 
-    # Resolve final fabric temperature
-    if t_fabric is not None:
-        final_fabric = t_fabric
-    elif p_fabric is not None:
-        final_fabric = p_fabric
-    elif preset == PRESET_COLD_START:
-        final_fabric = self.model.external_temperature
-    else:
-        # No preset, no explicit value — default to room temp (fully equilibrated)
-        final_fabric = final_room
+        # Resolve final fabric temperature
+        if t_fabric is not None:
+            final_fabric = t_fabric
+        elif p_fabric is not None:
+            final_fabric = p_fabric
+        elif preset == PRESET_COLD_START:
+            final_fabric = self.model.external_temperature
+        else:
+            # No preset, no explicit value — default to room temp (fully equilibrated)
+            final_fabric = final_room
 
-    # Resolve final radiator temperature — default to room temp (cold radiator)
-    final_rad = t_rad if t_rad is not None else final_room
+        # Resolve final radiator temperature — default to room temp (cold radiator)
+        final_rad = t_rad if t_rad is not None else final_room
 
-    # --- Apply to model ---
-    m = self.model
+        # --- Apply to model ---
+        m = self.model
 
-    if hasattr(m, "t_air"):
-        m.t_air = final_room
-    elif hasattr(m, "t_room"):
-        m.t_room = final_room
-    else:
-        m.temperature = final_room
+        if hasattr(m, "t_air"):
+            m.t_air = final_room
+        elif hasattr(m, "t_room"):
+            m.t_room = final_room
+        else:
+            m.temperature = final_room
 
-    if hasattr(m, "t_fabric"):
-        m.t_fabric = final_fabric
+        if hasattr(m, "t_fabric"):
+            m.t_fabric = final_fabric
 
-    if hasattr(m, "t_rad"):
-        m.t_rad = final_rad
+        if hasattr(m, "t_rad"):
+            m.t_rad = final_rad
 
-    # Reset heater/valve state — model starts from rest
-    # Use the proper method to set power/valve position
-    if hasattr(m, "set_power_fraction"):
-        m.set_power_fraction(0.0)
-    elif hasattr(m, "set_valve_position"):  # Fallback if different method exists
-        m.set_valve_position(0.0)
-    
-    # Reset effective heater power if it exists
-    if hasattr(m, "effective_heater_power"):
-        m.effective_heater_power = 0.0
+        # Reset heater/valve state — model starts from rest
+        # Use the proper method to set power/valve position
+        if hasattr(m, "set_power_fraction"):
+            m.set_power_fraction(0.0)
+        elif hasattr(m, "set_valve_position"):  # Fallback if different method exists
+            m.set_valve_position(0.0)
+        
+        # Reset effective heater power if it exists
+        if hasattr(m, "effective_heater_power"):
+            m.effective_heater_power = 0.0
 
-    # Flush pipe delay queue — stale commands must not carry over
-    if hasattr(m, "_pipe_queue") and hasattr(m, "_pipe_queue_size"):
-        m._pipe_queue.clear()
-        m._pipe_accum = 0.0
-        for _ in range(m._pipe_queue_size):
-            m._pipe_queue.append(0.0)
+        # Flush pipe delay queue — stale commands must not carry over
+        if hasattr(m, "_pipe_queue") and hasattr(m, "_pipe_queue_size"):
+            m._pipe_queue.clear()
+            m._pipe_accum = 0.0
+            for _ in range(m._pipe_queue_size):
+                m._pipe_queue.append(0.0)
 
-    # Reset diagnostic rates so sensors don't show stale values
-    if hasattr(m, "heating_rate"):
-        m.heating_rate = 0.0
-    if hasattr(m, "heat_loss_rate"):
-        m.heat_loss_rate = 0.0
-    if hasattr(m, "net_heat_rate"):
-        m.net_heat_rate = 0.0
+        # Reset diagnostic rates so sensors don't show stale values
+        if hasattr(m, "heating_rate"):
+            m.heating_rate = 0.0
+        if hasattr(m, "heat_loss_rate"):
+            m.heat_loss_rate = 0.0
+        if hasattr(m, "net_heat_rate"):
+            m.net_heat_rate = 0.0
 
-    _LOGGER.info(
-        "Model reset: preset=%s t_room=%.1f t_fabric=%.1f t_rad=%.1f",
-        preset or "manual",
-        final_room,
-        final_fabric,
-        final_rad,
-    )
-    self._notify_listeners()
+        _LOGGER.info(
+            "Model reset: preset=%s t_room=%.1f t_fabric=%.1f t_rad=%.1f",
+            preset or "manual",
+            final_room,
+            final_fabric,
+            final_rad,
+        )
+        self._notify_listeners()
 
     def _subscribe_ext_temp(self) -> None:
         entity = self.config.get(CONF_EXTERNAL_TEMP, "")
