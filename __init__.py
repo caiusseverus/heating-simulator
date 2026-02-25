@@ -5,6 +5,8 @@ import logging
 from datetime import timedelta
 from typing import Any
 
+import voluptuous as vol
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
@@ -82,12 +84,29 @@ from .const import (
     DEFAULT_INITIAL_TEMP,
     DEFAULT_EXTERNAL_TEMP_FIXED,
     DEFAULT_UPDATE_INTERVAL,
+    # reset action
+    ACTION_RESET,
+    PRESET_COLD_START,
+    PRESET_OVERNIGHT,
+    PRESET_ROOM_TEMPERATURE,
+    RESET_PRESETS,
 )
 from .thermal_model import SimpleThermalModel, R2C2ThermalModel, WetRadiatorModel, R2C2RadiatorModel
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.SENSOR, Platform.NUMBER, Platform.SWITCH]
+
+_RESET_SERVICE_SCHEMA = vol.Schema(
+    {
+        vol.Optional("preset"): vol.In(
+            [PRESET_COLD_START, PRESET_OVERNIGHT, PRESET_ROOM_TEMPERATURE]
+        ),
+        vol.Optional("t_room"):   vol.Coerce(float),
+        vol.Optional("t_fabric"): vol.Coerce(float),
+        vol.Optional("t_rad"):    vol.Coerce(float),
+    }
+)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -99,6 +118,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     await simulator.async_start()
     entry.async_on_unload(entry.add_update_listener(_async_update_options))
+
+    # Register the reset action once per domain (idempotent — HA ignores duplicate
+    # registrations of the same service name, so this is safe with multiple entries).
+    async def _handle_reset(call) -> None:
+        """Handle the reset_model service call — applies to all loaded instances."""
+        for sim in hass.data[DOMAIN].values():
+            sim.reset_model(
+                t_room=call.data.get("t_room"),
+                t_fabric=call.data.get("t_fabric"),
+                t_rad=call.data.get("t_rad"),
+                preset=call.data.get("preset"),
+            )
+
+    if not hass.services.has_service(DOMAIN, ACTION_RESET):
+        hass.services.async_register(
+            DOMAIN,
+            ACTION_RESET,
+            _handle_reset,
+            schema=_RESET_SERVICE_SCHEMA,
+        )
+
     return True
 
 
@@ -106,6 +146,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     simulator: HeatingSimulator = hass.data[DOMAIN].pop(entry.entry_id)
     simulator.async_stop()
+    # Remove the service only when the last instance is unloaded
+    if not hass.data[DOMAIN]:
+        hass.services.async_remove(DOMAIN, ACTION_RESET)
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
@@ -274,6 +317,98 @@ class HeatingSimulator:
         if t_rad is not None and hasattr(self.model, "t_rad"):
             self.model.t_rad = t_rad
             _LOGGER.debug("Restored radiator temperature: %.2f°C", t_rad)
+
+    def reset_model(
+        self,
+        t_room: float | None = None,
+        t_fabric: float | None = None,
+        t_rad: float | None = None,
+        preset: str | None = None,
+    ) -> None:
+        """
+        Reset all model state variables to known values.
+
+        Priority: explicit t_room/t_fabric/t_rad args > preset > configured initial_temp.
+        For cold_start preset, t_room defaults to the current external temperature.
+        Unspecified fabric and radiator temperatures default to the resolved t_room,
+        giving a fully equilibrated starting condition.
+        """
+        # Resolve preset defaults first, then let explicit args override
+        p_room: float | None = None
+        p_fabric: float | None = None
+
+        if preset and preset in RESET_PRESETS:
+            p = RESET_PRESETS[preset]
+            p_room = p["t_room"]     # None means "use T_ext" (cold_start)
+            p_fabric = p["t_fabric"]
+
+        # Resolve final room temperature
+        if t_room is not None:
+            final_room = t_room
+        elif p_room is not None:
+            final_room = p_room
+        elif preset == PRESET_COLD_START:
+            # cold_start with no explicit t_room: equilibrate to current external temp
+            final_room = self.model.external_temperature
+        else:
+            final_room = float(self.config.get(CONF_INITIAL_TEMP, DEFAULT_INITIAL_TEMP))
+
+        # Resolve final fabric temperature
+        if t_fabric is not None:
+            final_fabric = t_fabric
+        elif p_fabric is not None:
+            final_fabric = p_fabric
+        elif preset == PRESET_COLD_START:
+            final_fabric = self.model.external_temperature
+        else:
+            # No preset, no explicit value — default to room temp (fully equilibrated)
+            final_fabric = final_room
+
+        # Resolve final radiator temperature — default to room temp (cold radiator)
+        final_rad = t_rad if t_rad is not None else final_room
+
+        # --- Apply to model ---
+        m = self.model
+
+        if hasattr(m, "t_air"):
+            m.t_air = final_room
+        elif hasattr(m, "t_room"):
+            m.t_room = final_room
+        else:
+            m.temperature = final_room
+
+        if hasattr(m, "t_fabric"):
+            m.t_fabric = final_fabric
+
+        if hasattr(m, "t_rad"):
+            m.t_rad = final_rad
+
+        # Reset heater/valve state — model starts from rest
+        m.power_setpoint = 0.0
+        m.effective_heater_power = 0.0
+        if hasattr(m, "valve_fraction"):
+            m.valve_fraction = 0.0
+
+        # Flush pipe delay queue — stale commands must not carry over
+        if hasattr(m, "_pipe_queue") and hasattr(m, "_pipe_queue_size"):
+            m._pipe_queue.clear()
+            m._pipe_accum = 0.0
+            for _ in range(m._pipe_queue_size):
+                m._pipe_queue.append(0.0)
+
+        # Reset diagnostic rates so sensors don't show stale values
+        m.heating_rate = 0.0
+        m.heat_loss_rate = 0.0
+        m.net_heat_rate = 0.0
+
+        _LOGGER.info(
+            "Model reset: preset=%s t_room=%.1f t_fabric=%.1f t_rad=%.1f",
+            preset or "manual",
+            final_room,
+            final_fabric,
+            final_rad,
+        )
+        self._notify_listeners()
 
     def _subscribe_ext_temp(self) -> None:
         entity = self.config.get(CONF_EXTERNAL_TEMP, "")
