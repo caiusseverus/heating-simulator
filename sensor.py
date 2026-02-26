@@ -38,6 +38,7 @@ async def async_setup_entry(
     # Common sensors for all model types
     entities = [
         TemperatureSensor(simulator, entry),
+        TrueTemperatureSensor(simulator, entry),
         HeatingRateSensor(simulator, entry),
         HeatLossRateSensor(simulator, entry),
         NetHeatRateSensor(simulator, entry),
@@ -243,9 +244,6 @@ class TemperatureSensor(_Base, RestoreSensor):
     def extra_state_attributes(self):
         cfg = self._sensor_cfg()
         attrs = {"model_type": self._sim.model_type}
-        # Expose true temperature so users can see the raw model value alongside
-        # the (possibly degraded) reported value.
-        attrs["true_temperature"] = round(self._sim.model.temperature, 3)
         # Expose active imperfection parameters for transparency / debugging
         noise_std   = float(cfg.get(CONF_SENSOR_NOISE_STD_DEV, DEFAULT_SENSOR_NOISE_STD_DEV))
         bias        = float(cfg.get(CONF_SENSOR_BIAS,           DEFAULT_SENSOR_BIAS))
@@ -261,6 +259,39 @@ class TemperatureSensor(_Base, RestoreSensor):
             if self._lagged_temp is not None and lag_tau > 0.0:
                 attrs["sensor_lagged_temp"] = round(self._lagged_temp, 3)
         return attrs
+
+
+
+class TrueTemperatureSensor(_Base):
+    """
+    Exposes the unmodified model room temperature as a standalone sensor.
+
+    This is the value before the F-02/F-04/F-07 imperfection pipeline is
+    applied. Useful for comparing against the degraded TemperatureSensor
+    to observe the effect of noise, lag, bias, and quantisation, and for
+    confirming the model is evolving correctly independent of sensor artefacts.
+
+    Intentionally not a RestoreSensor — the model true temperature is
+    restored via TemperatureSensor; this entity just reads it.
+    """
+    _attr_name = "Room Temperature (True)"
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_suggested_display_precision = 3
+    _attr_icon = "mdi:thermometer-check"
+
+    def __init__(self, sim, entry):
+        super().__init__(sim, entry)
+        self._attr_unique_id = f"{entry.entry_id}_true_temperature"
+
+    @property
+    def native_value(self):
+        return round(self._sim.model.temperature, 3)
+
+    @property
+    def extra_state_attributes(self):
+        return {"model_type": self._sim.model_type}
 
 
 class HeatingRateSensor(_Base):
