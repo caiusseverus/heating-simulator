@@ -131,6 +131,24 @@ DEFAULT_C_ROOM_RAD = 500_000.0   # J/°C  (air + all room contents, same definit
 DEFAULT_PIPE_DELAY = 0.0         # seconds
 
 # ---------------------------------------------------------------------------
+# Config keys — Sensor imperfection suite (F-02, F-04, F-07)
+# ---------------------------------------------------------------------------
+# All parameters are optional; omitting them (or setting to 0) disables
+# the corresponding effect so the sensor behaves identically to before.
+CONF_SENSOR_NOISE_STD_DEV   = "sensor_noise_std_dev"   # °C  — Gaussian noise σ
+CONF_SENSOR_BIAS            = "sensor_bias"             # °C  — fixed additive offset
+CONF_SENSOR_QUANTISATION    = "sensor_quantisation"     # °C  — minimum reportable step
+CONF_SENSOR_LAG_TAU         = "sensor_lag_tau"          # s   — first-order low-pass time constant
+CONF_SENSOR_UPDATE_RATE     = "sensor_update_rate_s"    # s   — minimum interval between reports (0 = every tick)
+
+# Defaults — sensor imperfection (all zero = perfect sensor, back-compatible)
+DEFAULT_SENSOR_NOISE_STD_DEV = 0.0
+DEFAULT_SENSOR_BIAS          = 0.0
+DEFAULT_SENSOR_QUANTISATION  = 0.0
+DEFAULT_SENSOR_LAG_TAU       = 0.0
+DEFAULT_SENSOR_UPDATE_RATE   = 0.0
+
+# ---------------------------------------------------------------------------
 # Reset action
 # ---------------------------------------------------------------------------
 ACTION_RESET = "reset_model"

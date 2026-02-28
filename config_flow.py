@@ -47,6 +47,17 @@ from .const import (
     CONF_CALIB_A,
     CONF_CALIB_B,
     CONF_CALIB_TAU,
+    # sensor imperfection suite (F-02, F-04, F-07)
+    CONF_SENSOR_NOISE_STD_DEV,
+    CONF_SENSOR_BIAS,
+    CONF_SENSOR_QUANTISATION,
+    CONF_SENSOR_LAG_TAU,
+    CONF_SENSOR_UPDATE_RATE,
+    DEFAULT_SENSOR_NOISE_STD_DEV,
+    DEFAULT_SENSOR_BIAS,
+    DEFAULT_SENSOR_QUANTISATION,
+    DEFAULT_SENSOR_LAG_TAU,
+    DEFAULT_SENSOR_UPDATE_RATE,
     # model types / control modes
     MODEL_SIMPLE,
     MODEL_R2C2,
@@ -349,18 +360,26 @@ class HeatingSimulatorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 class HeatingSimulatorOptionsFlow(config_entries.OptionsFlow):
     """
-    Allow tweaking of runtime parameters without removing the entry.
+    Two-step options flow:
+      Step 1 (init)   — model physics parameters (same as before)
+      Step 2 (sensor) — sensor imperfection suite (F-02/F-04/F-07)
+
+    Splitting into two steps prevents the already-long model-params page
+    from becoming unmanageable. The sensor page is always shown as step 2
+    regardless of model type, since the pipeline is model-agnostic.
 
     Options are stored in entry.options and always take precedence over
     entry.data (which holds the original setup values). The coordinator
     merges them as {**entry.data, **entry.options} so options win.
-
-    To avoid configuration drift we populate schema defaults exclusively
-    from the merged view — the same priority order the coordinator uses.
     """
 
+    def __init__(self) -> None:
+        super().__init__()
+        # Accumulate step-1 data here until we can write both steps at once
+        self._model_options: dict[str, Any] = {}
+
     async def async_step_init(self, user_input=None) -> FlowResult:
-        # Merge with options taking priority — same logic as coordinator
+        """Step 1: model physics parameters."""
         cfg = {**self.config_entry.data, **self.config_entry.options}
         model_type = cfg.get(CONF_MODEL_TYPE, MODEL_SIMPLE)
 
@@ -374,7 +393,9 @@ class HeatingSimulatorOptionsFlow(config_entries.OptionsFlow):
                 user_input = apply_calibration_radiator(user_input, cfg)
             elif model_type == MODEL_R2C2_RADIATOR:
                 user_input = apply_calibration_r2c2_radiator(user_input, cfg)
-            return self.async_create_entry(title="", data=user_input)
+            # Stash and proceed to sensor step
+            self._model_options = dict(user_input)
+            return await self.async_step_sensor()
 
         if model_type == MODEL_R2C2:
             schema = _r2c2_options_schema(cfg)
@@ -386,6 +407,20 @@ class HeatingSimulatorOptionsFlow(config_entries.OptionsFlow):
             schema = _simple_options_schema(cfg)
 
         return self.async_show_form(step_id="init", data_schema=schema)
+
+    async def async_step_sensor(self, user_input=None) -> FlowResult:
+        """Step 2: sensor imperfection parameters (F-02, F-04, F-07)."""
+        cfg = {**self.config_entry.data, **self.config_entry.options}
+
+        if user_input is not None:
+            # Merge model options from step 1 with sensor options from step 2
+            combined = {**self._model_options, **user_input}
+            return self.async_create_entry(title="", data=combined)
+
+        return self.async_show_form(
+            step_id="sensor",
+            data_schema=_sensor_options_schema(cfg),
+        )
 
 
 def _g(cfg, key, default):
@@ -689,6 +724,38 @@ def apply_calibration_r2c2(user_input: dict, cfg: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Options schemas
 # ---------------------------------------------------------------------------
+
+def _sensor_options_schema(cfg) -> vol.Schema:
+    """
+    Sensor imperfection options — shown as a dedicated second step in the
+    options flow so it doesn't add to an already-long model-params page.
+
+    All fields default to 0 (disabled). Setting any value to 0 disables
+    that pipeline stage with no performance cost.
+    """
+    return vol.Schema({
+        vol.Optional(
+            CONF_SENSOR_NOISE_STD_DEV,
+            default=_g(cfg, CONF_SENSOR_NOISE_STD_DEV, DEFAULT_SENSOR_NOISE_STD_DEV),
+        ): vol.All(vol.Coerce(float), vol.Range(min=0, max=10)),
+        vol.Optional(
+            CONF_SENSOR_BIAS,
+            default=_g(cfg, CONF_SENSOR_BIAS, DEFAULT_SENSOR_BIAS),
+        ): vol.All(vol.Coerce(float), vol.Range(min=-20, max=20)),
+        vol.Optional(
+            CONF_SENSOR_QUANTISATION,
+            default=_g(cfg, CONF_SENSOR_QUANTISATION, DEFAULT_SENSOR_QUANTISATION),
+        ): vol.All(vol.Coerce(float), vol.Range(min=0, max=5)),
+        vol.Optional(
+            CONF_SENSOR_LAG_TAU,
+            default=_g(cfg, CONF_SENSOR_LAG_TAU, DEFAULT_SENSOR_LAG_TAU),
+        ): vol.All(vol.Coerce(float), vol.Range(min=0, max=3600)),
+        vol.Optional(
+            CONF_SENSOR_UPDATE_RATE,
+            default=_g(cfg, CONF_SENSOR_UPDATE_RATE, DEFAULT_SENSOR_UPDATE_RATE),
+        ): vol.All(vol.Coerce(float), vol.Range(min=0, max=3600)),
+    })
+
 
 def _simple_options_schema(cfg) -> vol.Schema:
     return vol.Schema({

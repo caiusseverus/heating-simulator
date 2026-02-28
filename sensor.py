@@ -1,6 +1,8 @@
 """Sensor entities for Heating Simulator — all three model types."""
 from __future__ import annotations
 import logging
+import random
+import time
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -14,7 +16,13 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, MODEL_R2C2, MODEL_RADIATOR, MODEL_R2C2_RADIATOR
+from .const import (
+    DOMAIN, MODEL_R2C2, MODEL_RADIATOR, MODEL_R2C2_RADIATOR,
+    CONF_SENSOR_NOISE_STD_DEV, CONF_SENSOR_BIAS, CONF_SENSOR_QUANTISATION,
+    CONF_SENSOR_LAG_TAU, CONF_SENSOR_UPDATE_RATE,
+    DEFAULT_SENSOR_NOISE_STD_DEV, DEFAULT_SENSOR_BIAS, DEFAULT_SENSOR_QUANTISATION,
+    DEFAULT_SENSOR_LAG_TAU, DEFAULT_SENSOR_UPDATE_RATE,
+)
 from . import HeatingSimulator
 
 _LOGGER = logging.getLogger(__name__)
@@ -30,6 +38,7 @@ async def async_setup_entry(
     # Common sensors for all model types
     entities = [
         TemperatureSensor(simulator, entry),
+        TrueTemperatureSensor(simulator, entry),
         HeatingRateSensor(simulator, entry),
         HeatLossRateSensor(simulator, entry),
         NetHeatRateSensor(simulator, entry),
@@ -117,6 +126,16 @@ class TemperatureSensor(_Base, RestoreSensor):
 
     Extends RestoreSensor so the last known value survives HA restarts and
     can be injected back into the thermal model before the first tick fires.
+
+    Applies the F-02 / F-04 / F-07 sensor imperfection pipeline in order:
+      1. Sensor lag    — first-order low-pass  (F-04)
+      2. Bias          — fixed additive offset  (F-07)
+      3. Noise         — Gaussian sample        (F-02)
+      4. Quantisation  — round to step size     (F-02)
+      5. Rate-limit    — suppress if interval not elapsed (F-04)
+
+    All pipeline stages are disabled when their parameter is 0 (the default),
+    making the sensor behave identically to the pre-feature version.
     """
     _attr_name = "Room Temperature"
     _attr_device_class = SensorDeviceClass.TEMPERATURE
@@ -128,6 +147,18 @@ class TemperatureSensor(_Base, RestoreSensor):
         super().__init__(sim, entry)
         self._attr_unique_id = f"{entry.entry_id}_temperature"
 
+        # --- Sensor imperfection state ---
+        # Lag filter: initialised to None; set on first tick from true model temp
+        self._lagged_temp: float | None = None
+        # Rate-limiter: last time we emitted a new value (monotonic clock)
+        self._last_report_time: float = 0.0
+        # Rate-limiter: the last value we actually reported (so we can repeat it)
+        self._last_reported_value: float | None = None
+
+    def _sensor_cfg(self) -> dict:
+        """Return merged data+options config for the parent entry."""
+        return {**self._sim.entry.data, **self._sim.entry.options}
+
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         # Attempt to restore the last known room temperature
@@ -136,11 +167,123 @@ class TemperatureSensor(_Base, RestoreSensor):
             try:
                 t_room = float(last.native_value)
                 self._sim.restore_temperatures(t_room=t_room)
+                # Seed the lag filter so it doesn't start from zero
+                self._lagged_temp = t_room
+                self._last_reported_value = t_room
                 _LOGGER.debug(
                     "Restored room temperature %.2f°C from previous state", t_room
                 )
             except (ValueError, TypeError) as exc:
                 _LOGGER.warning("Could not restore room temperature: %s", exc)
+
+    @property
+    def native_value(self):
+        cfg = self._sensor_cfg()
+        noise_std   = float(cfg.get(CONF_SENSOR_NOISE_STD_DEV, DEFAULT_SENSOR_NOISE_STD_DEV))
+        bias        = float(cfg.get(CONF_SENSOR_BIAS,           DEFAULT_SENSOR_BIAS))
+        quantise    = float(cfg.get(CONF_SENSOR_QUANTISATION,   DEFAULT_SENSOR_QUANTISATION))
+        lag_tau     = float(cfg.get(CONF_SENSOR_LAG_TAU,        DEFAULT_SENSOR_LAG_TAU))
+        update_rate = float(cfg.get(CONF_SENSOR_UPDATE_RATE,    DEFAULT_SENSOR_UPDATE_RATE))
+
+        true_temp = self._sim.model.temperature
+
+        # ------------------------------------------------------------------
+        # Stage 1 — Sensor lag (F-04): first-order low-pass filter
+        #   lagged += dt/tau * (true - lagged)   →  α = dt / (tau + dt)
+        # We use the simulator's update interval as dt.
+        # ------------------------------------------------------------------
+        if lag_tau > 0.0:
+            dt = float(self._sim.update_interval)  # seconds per tick
+            alpha = dt / (lag_tau + dt)
+            if self._lagged_temp is None:
+                self._lagged_temp = true_temp      # cold-start: no lag on first tick
+            else:
+                self._lagged_temp += alpha * (true_temp - self._lagged_temp)
+            value = self._lagged_temp
+        else:
+            # No lag — reset state so switching lag on mid-run starts cleanly
+            self._lagged_temp = true_temp
+            value = true_temp
+
+        # ------------------------------------------------------------------
+        # Stage 2 — Bias (F-07): fixed additive offset
+        # ------------------------------------------------------------------
+        value += bias
+
+        # ------------------------------------------------------------------
+        # Stage 3 — Noise (F-02): Gaussian, σ = noise_std_dev
+        # ------------------------------------------------------------------
+        if noise_std > 0.0:
+            value += random.gauss(0.0, noise_std)
+
+        # ------------------------------------------------------------------
+        # Stage 4 — Quantisation (F-02): round to nearest step
+        # ------------------------------------------------------------------
+        if quantise > 0.0:
+            value = round(value / quantise) * quantise
+
+        # ------------------------------------------------------------------
+        # Stage 5 — Rate-limit (F-04): suppress report until interval elapses
+        # ------------------------------------------------------------------
+        if update_rate > 0.0:
+            now = time.monotonic()
+            if (now - self._last_report_time) < update_rate:
+                # Interval not yet elapsed — return the previous reported value.
+                # If we have no previous value yet (first tick), fall through.
+                if self._last_reported_value is not None:
+                    return round(self._last_reported_value, 3)
+            # Interval elapsed (or first report): latch the new value and timestamp
+            self._last_report_time = now
+            self._last_reported_value = value
+        else:
+            self._last_reported_value = value
+
+        return round(value, 3)
+
+    @property
+    def extra_state_attributes(self):
+        cfg = self._sensor_cfg()
+        attrs = {"model_type": self._sim.model_type}
+        # Expose active imperfection parameters for transparency / debugging
+        noise_std   = float(cfg.get(CONF_SENSOR_NOISE_STD_DEV, DEFAULT_SENSOR_NOISE_STD_DEV))
+        bias        = float(cfg.get(CONF_SENSOR_BIAS,           DEFAULT_SENSOR_BIAS))
+        quantise    = float(cfg.get(CONF_SENSOR_QUANTISATION,   DEFAULT_SENSOR_QUANTISATION))
+        lag_tau     = float(cfg.get(CONF_SENSOR_LAG_TAU,        DEFAULT_SENSOR_LAG_TAU))
+        update_rate = float(cfg.get(CONF_SENSOR_UPDATE_RATE,    DEFAULT_SENSOR_UPDATE_RATE))
+        if any([noise_std, bias, quantise, lag_tau, update_rate]):
+            attrs["sensor_noise_std_dev"]  = noise_std
+            attrs["sensor_bias"]           = bias
+            attrs["sensor_quantisation"]   = quantise
+            attrs["sensor_lag_tau_s"]      = lag_tau
+            attrs["sensor_update_rate_s"]  = update_rate
+            if self._lagged_temp is not None and lag_tau > 0.0:
+                attrs["sensor_lagged_temp"] = round(self._lagged_temp, 3)
+        return attrs
+
+
+
+class TrueTemperatureSensor(_Base):
+    """
+    Exposes the unmodified model room temperature as a standalone sensor.
+
+    This is the value before the F-02/F-04/F-07 imperfection pipeline is
+    applied. Useful for comparing against the degraded TemperatureSensor
+    to observe the effect of noise, lag, bias, and quantisation, and for
+    confirming the model is evolving correctly independent of sensor artefacts.
+
+    Intentionally not a RestoreSensor — the model true temperature is
+    restored via TemperatureSensor; this entity just reads it.
+    """
+    _attr_name = "Room Temperature (True)"
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_suggested_display_precision = 3
+    _attr_icon = "mdi:thermometer-check"
+
+    def __init__(self, sim, entry):
+        super().__init__(sim, entry)
+        self._attr_unique_id = f"{entry.entry_id}_true_temperature"
 
     @property
     def native_value(self):
