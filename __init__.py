@@ -91,8 +91,22 @@ from .const import (
     PRESET_OVERNIGHT,
     PRESET_ROOM_TEMPERATURE,
     RESET_PRESETS,
+    # F-11 external temp profile
+    CONF_EXT_TEMP_PROFILE_ENABLED, CONF_EXT_TEMP_BASE, CONF_EXT_TEMP_AMPLITUDE,
+    CONF_EXT_TEMP_MIN_HOUR, CONF_EXT_TEMP_MAX_HOUR,
+    DEFAULT_EXT_TEMP_PROFILE_ENABLED, DEFAULT_EXT_TEMP_BASE, DEFAULT_EXT_TEMP_AMPLITUDE,
+    DEFAULT_EXT_TEMP_MIN_HOUR, DEFAULT_EXT_TEMP_MAX_HOUR,
+    # F-05 occupancy
+    CONF_OCCUPANCY_ENABLED, CONF_OCCUPANCY_MAX_OCCUPANTS, CONF_OCCUPANCY_COOKING_POWER,
+    CONF_OCCUPANCY_COOKING_DURATION, CONF_OCCUPANCY_COOKING_EVENTS_PER_DAY, CONF_OCCUPANCY_SEED,
+    DEFAULT_OCCUPANCY_ENABLED, DEFAULT_OCCUPANCY_MAX_OCCUPANTS, DEFAULT_OCCUPANCY_COOKING_POWER,
+    DEFAULT_OCCUPANCY_COOKING_DURATION, DEFAULT_OCCUPANCY_COOKING_EVENTS_PER_DAY, DEFAULT_OCCUPANCY_SEED,
+    # F-06, F-14 weather
+    CONF_WIND_SPEED, CONF_WIND_COEFFICIENT, CONF_RAIN_INTENSITY, CONF_RAIN_MOISTURE_FACTOR,
+    DEFAULT_WIND_SPEED, DEFAULT_WIND_COEFFICIENT, DEFAULT_RAIN_INTENSITY, DEFAULT_RAIN_MOISTURE_FACTOR,
 )
 from .thermal_model import SimpleThermalModel, R2C2ThermalModel, WetRadiatorModel, R2C2RadiatorModel
+from .disturbances import ExternalTempProfile, OccupancyProfile, WeatherProfile
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -226,6 +240,16 @@ class HeatingSimulator:
         self._unsub_solar = None
         self._unsub_flow_temp = None
 
+        # Simulated time counter (seconds). Increments by update_interval on each
+        # tick. Used by disturbance profiles to determine time-of-day. Starts at 0
+        # (midnight) and increases indefinitely — profiles use modulo internally.
+        self._sim_time_s: float = 0.0
+
+        # Disturbance profiles — rebuilt from config on each reload.
+        self._ext_temp_profile: ExternalTempProfile = self._build_ext_temp_profile(config)
+        self._occupancy_profile: OccupancyProfile = self._build_occupancy_profile(config)
+        self._weather_profile: WeatherProfile = self._build_weather_profile(config)
+
     # ------------------------------------------------------------------
     # Model factory
     # ------------------------------------------------------------------
@@ -290,6 +314,37 @@ class HeatingSimulator:
                 initial_temp=initial_temp,
                 initial_external_temp=initial_ext,
             )
+
+    # ------------------------------------------------------------------
+    # Disturbance profile factories
+    # ------------------------------------------------------------------
+
+    def _build_ext_temp_profile(self, cfg: dict) -> ExternalTempProfile:
+        return ExternalTempProfile(
+            enabled=bool(cfg.get(CONF_EXT_TEMP_PROFILE_ENABLED, DEFAULT_EXT_TEMP_PROFILE_ENABLED)),
+            base_temp=float(cfg.get(CONF_EXT_TEMP_BASE, DEFAULT_EXT_TEMP_BASE)),
+            temp_amplitude=float(cfg.get(CONF_EXT_TEMP_AMPLITUDE, DEFAULT_EXT_TEMP_AMPLITUDE)),
+            min_hour=float(cfg.get(CONF_EXT_TEMP_MIN_HOUR, DEFAULT_EXT_TEMP_MIN_HOUR)),
+            max_hour=float(cfg.get(CONF_EXT_TEMP_MAX_HOUR, DEFAULT_EXT_TEMP_MAX_HOUR)),
+        )
+
+    def _build_occupancy_profile(self, cfg: dict) -> OccupancyProfile:
+        return OccupancyProfile(
+            enabled=bool(cfg.get(CONF_OCCUPANCY_ENABLED, DEFAULT_OCCUPANCY_ENABLED)),
+            max_occupants=int(cfg.get(CONF_OCCUPANCY_MAX_OCCUPANTS, DEFAULT_OCCUPANCY_MAX_OCCUPANTS)),
+            cooking_power_watts=float(cfg.get(CONF_OCCUPANCY_COOKING_POWER, DEFAULT_OCCUPANCY_COOKING_POWER)),
+            cooking_duration_s=float(cfg.get(CONF_OCCUPANCY_COOKING_DURATION, DEFAULT_OCCUPANCY_COOKING_DURATION)),
+            cooking_events_per_day=float(cfg.get(CONF_OCCUPANCY_COOKING_EVENTS_PER_DAY, DEFAULT_OCCUPANCY_COOKING_EVENTS_PER_DAY)),
+            seed=int(cfg.get(CONF_OCCUPANCY_SEED, DEFAULT_OCCUPANCY_SEED)),
+        )
+
+    def _build_weather_profile(self, cfg: dict) -> WeatherProfile:
+        return WeatherProfile(
+            wind_speed_m_s=float(cfg.get(CONF_WIND_SPEED, DEFAULT_WIND_SPEED)),
+            wind_coefficient=float(cfg.get(CONF_WIND_COEFFICIENT, DEFAULT_WIND_COEFFICIENT)),
+            rain_intensity_fraction=float(cfg.get(CONF_RAIN_INTENSITY, DEFAULT_RAIN_INTENSITY)),
+            rain_moisture_factor=float(cfg.get(CONF_RAIN_MOISTURE_FACTOR, DEFAULT_RAIN_MOISTURE_FACTOR)),
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -509,7 +564,26 @@ class HeatingSimulator:
 
     @callback
     def _async_tick(self, _now) -> None:
-        self.model.step(self.update_interval)
+        dt = self.update_interval
+
+        # --- F-11: External temperature profile ---
+        # When the profile is active it overrides both the fixed value and any
+        # tracked entity. The entity subscription still runs but the profile
+        # wins on every tick. When disabled, the model keeps whatever T_ext was
+        # last set (from entity or fixed config) — no change to existing behaviour.
+        if self._ext_temp_profile.enabled:
+            t_ext = self._ext_temp_profile.temperature_at(self._sim_time_s)
+            self.model.set_external_temperature(t_ext)
+
+        # --- F-05: Occupancy / internal gain ---
+        self.model.internal_gain_watts = self._occupancy_profile.gain_at(self._sim_time_s)
+
+        # --- F-06, F-14: Wind and rain effects on heat loss ---
+        self.model.weather_k_multiplier = self._weather_profile.multiplier
+
+        # Advance simulated clock and step the physics model
+        self._sim_time_s += dt
+        self.model.step(dt)
         self._notify_listeners()
 
     # ------------------------------------------------------------------

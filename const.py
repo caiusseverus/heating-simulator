@@ -149,6 +149,54 @@ DEFAULT_SENSOR_LAG_TAU       = 0.0
 DEFAULT_SENSOR_UPDATE_RATE   = 0.0
 
 # ---------------------------------------------------------------------------
+# Config keys — F-11  External temperature profile
+# ---------------------------------------------------------------------------
+CONF_EXT_TEMP_PROFILE_ENABLED = "ext_temp_profile_enabled"
+CONF_EXT_TEMP_BASE            = "ext_temp_profile_base"        # °C  mean temp
+CONF_EXT_TEMP_AMPLITUDE       = "ext_temp_profile_amplitude"   # °C  half-swing
+CONF_EXT_TEMP_MIN_HOUR        = "ext_temp_profile_min_hour"    # h   trough time
+CONF_EXT_TEMP_MAX_HOUR        = "ext_temp_profile_max_hour"    # h   peak time
+
+# Defaults — F-11 (disabled = back-compatible)
+DEFAULT_EXT_TEMP_PROFILE_ENABLED = False
+DEFAULT_EXT_TEMP_BASE            = 5.0
+DEFAULT_EXT_TEMP_AMPLITUDE       = 3.0
+DEFAULT_EXT_TEMP_MIN_HOUR        = 5.5
+DEFAULT_EXT_TEMP_MAX_HOUR        = 14.5
+
+# ---------------------------------------------------------------------------
+# Config keys — F-05  Occupancy and internal heat gain
+# ---------------------------------------------------------------------------
+CONF_OCCUPANCY_ENABLED             = "occupancy_enabled"
+CONF_OCCUPANCY_MAX_OCCUPANTS       = "occupancy_max_occupants"      # persons
+CONF_OCCUPANCY_COOKING_POWER       = "occupancy_cooking_power_w"    # W
+CONF_OCCUPANCY_COOKING_DURATION    = "occupancy_cooking_duration_s" # s
+CONF_OCCUPANCY_COOKING_EVENTS_PER_DAY = "occupancy_cooking_events_per_day"
+CONF_OCCUPANCY_SEED                = "occupancy_seed"               # int
+
+# Defaults — F-05 (disabled = back-compatible)
+DEFAULT_OCCUPANCY_ENABLED             = False
+DEFAULT_OCCUPANCY_MAX_OCCUPANTS       = 2
+DEFAULT_OCCUPANCY_COOKING_POWER       = 0.0
+DEFAULT_OCCUPANCY_COOKING_DURATION    = 1200.0
+DEFAULT_OCCUPANCY_COOKING_EVENTS_PER_DAY = 2.0
+DEFAULT_OCCUPANCY_SEED                = 42
+
+# ---------------------------------------------------------------------------
+# Config keys — F-06, F-14  Wind and rain effects
+# ---------------------------------------------------------------------------
+CONF_WIND_SPEED           = "weather_wind_speed_m_s"        # m/s
+CONF_WIND_COEFFICIENT     = "weather_wind_coefficient"      # per (m/s) — 0 = disabled
+CONF_RAIN_INTENSITY       = "weather_rain_intensity"        # 0–1
+CONF_RAIN_MOISTURE_FACTOR = "weather_rain_moisture_factor"  # 0–0.5 — 0 = disabled
+
+# Defaults — F-06, F-14 (all zero = neutral, back-compatible)
+DEFAULT_WIND_SPEED           = 0.0
+DEFAULT_WIND_COEFFICIENT     = 0.0
+DEFAULT_RAIN_INTENSITY       = 0.0
+DEFAULT_RAIN_MOISTURE_FACTOR = 0.0
+
+# ---------------------------------------------------------------------------
 # Reset action
 # ---------------------------------------------------------------------------
 ACTION_RESET = "reset_model"

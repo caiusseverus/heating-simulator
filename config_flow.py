@@ -91,6 +91,19 @@ from .const import (
     DEFAULT_HEAT_LOSS_COEFF_RAD,
     DEFAULT_C_ROOM_RAD,
     DEFAULT_PIPE_DELAY,
+    # F-11 external temp profile
+    CONF_EXT_TEMP_PROFILE_ENABLED, CONF_EXT_TEMP_BASE, CONF_EXT_TEMP_AMPLITUDE,
+    CONF_EXT_TEMP_MIN_HOUR, CONF_EXT_TEMP_MAX_HOUR,
+    DEFAULT_EXT_TEMP_PROFILE_ENABLED, DEFAULT_EXT_TEMP_BASE, DEFAULT_EXT_TEMP_AMPLITUDE,
+    DEFAULT_EXT_TEMP_MIN_HOUR, DEFAULT_EXT_TEMP_MAX_HOUR,
+    # F-05 occupancy
+    CONF_OCCUPANCY_ENABLED, CONF_OCCUPANCY_MAX_OCCUPANTS, CONF_OCCUPANCY_COOKING_POWER,
+    CONF_OCCUPANCY_COOKING_DURATION, CONF_OCCUPANCY_COOKING_EVENTS_PER_DAY, CONF_OCCUPANCY_SEED,
+    DEFAULT_OCCUPANCY_ENABLED, DEFAULT_OCCUPANCY_MAX_OCCUPANTS, DEFAULT_OCCUPANCY_COOKING_POWER,
+    DEFAULT_OCCUPANCY_COOKING_DURATION, DEFAULT_OCCUPANCY_COOKING_EVENTS_PER_DAY, DEFAULT_OCCUPANCY_SEED,
+    # F-06, F-14 weather
+    CONF_WIND_SPEED, CONF_WIND_COEFFICIENT, CONF_RAIN_INTENSITY, CONF_RAIN_MOISTURE_FACTOR,
+    DEFAULT_WIND_SPEED, DEFAULT_WIND_COEFFICIENT, DEFAULT_RAIN_INTENSITY, DEFAULT_RAIN_MOISTURE_FACTOR,
 )
 
 # ---------------------------------------------------------------------------
@@ -377,6 +390,7 @@ class HeatingSimulatorOptionsFlow(config_entries.OptionsFlow):
         super().__init__()
         # Accumulate step-1 data here until we can write both steps at once
         self._model_options: dict[str, Any] = {}
+        self._sensor_options: dict[str, Any] = {}
 
     async def async_step_init(self, user_input=None) -> FlowResult:
         """Step 1: model physics parameters."""
@@ -413,13 +427,25 @@ class HeatingSimulatorOptionsFlow(config_entries.OptionsFlow):
         cfg = {**self.config_entry.data, **self.config_entry.options}
 
         if user_input is not None:
-            # Merge model options from step 1 with sensor options from step 2
-            combined = {**self._model_options, **user_input}
-            return self.async_create_entry(title="", data=combined)
+            self._sensor_options = dict(user_input)
+            return await self.async_step_disturbances()
 
         return self.async_show_form(
             step_id="sensor",
             data_schema=_sensor_options_schema(cfg),
+        )
+
+    async def async_step_disturbances(self, user_input=None) -> FlowResult:
+        """Step 3: disturbance profiles (F-05, F-06, F-11, F-14)."""
+        cfg = {**self.config_entry.data, **self.config_entry.options}
+
+        if user_input is not None:
+            combined = {**self._model_options, **self._sensor_options, **user_input}
+            return self.async_create_entry(title="", data=combined)
+
+        return self.async_show_form(
+            step_id="disturbances",
+            data_schema=_disturbances_options_schema(cfg),
         )
 
 
@@ -430,6 +456,84 @@ def _g(cfg, key, default):
     Falls back to the compiled default only if the key is absent from both.
     """
     return cfg.get(key, default)
+
+
+def _disturbances_options_schema(cfg) -> vol.Schema:
+    """
+    Disturbance profile options — F-05, F-06, F-11, F-14.
+
+    All fields default to disabled/neutral so upgrading an existing
+    installation without changing options produces identical behaviour.
+    """
+    return vol.Schema({
+        # --- F-11  External temperature profile ---
+        vol.Optional(
+            CONF_EXT_TEMP_PROFILE_ENABLED,
+            default=bool(_g(cfg, CONF_EXT_TEMP_PROFILE_ENABLED, DEFAULT_EXT_TEMP_PROFILE_ENABLED)),
+        ): bool,
+        vol.Optional(
+            CONF_EXT_TEMP_BASE,
+            default=float(_g(cfg, CONF_EXT_TEMP_BASE, DEFAULT_EXT_TEMP_BASE)),
+        ): vol.All(vol.Coerce(float), vol.Range(min=-30, max=40)),
+        vol.Optional(
+            CONF_EXT_TEMP_AMPLITUDE,
+            default=float(_g(cfg, CONF_EXT_TEMP_AMPLITUDE, DEFAULT_EXT_TEMP_AMPLITUDE)),
+        ): vol.All(vol.Coerce(float), vol.Range(min=0, max=20)),
+        vol.Optional(
+            CONF_EXT_TEMP_MIN_HOUR,
+            default=float(_g(cfg, CONF_EXT_TEMP_MIN_HOUR, DEFAULT_EXT_TEMP_MIN_HOUR)),
+        ): vol.All(vol.Coerce(float), vol.Range(min=0, max=24)),
+        vol.Optional(
+            CONF_EXT_TEMP_MAX_HOUR,
+            default=float(_g(cfg, CONF_EXT_TEMP_MAX_HOUR, DEFAULT_EXT_TEMP_MAX_HOUR)),
+        ): vol.All(vol.Coerce(float), vol.Range(min=0, max=24)),
+
+        # --- F-05  Occupancy and internal heat gain ---
+        vol.Optional(
+            CONF_OCCUPANCY_ENABLED,
+            default=bool(_g(cfg, CONF_OCCUPANCY_ENABLED, DEFAULT_OCCUPANCY_ENABLED)),
+        ): bool,
+        vol.Optional(
+            CONF_OCCUPANCY_MAX_OCCUPANTS,
+            default=int(_g(cfg, CONF_OCCUPANCY_MAX_OCCUPANTS, DEFAULT_OCCUPANCY_MAX_OCCUPANTS)),
+        ): vol.All(vol.Coerce(int), vol.Range(min=0, max=20)),
+        vol.Optional(
+            CONF_OCCUPANCY_COOKING_POWER,
+            default=float(_g(cfg, CONF_OCCUPANCY_COOKING_POWER, DEFAULT_OCCUPANCY_COOKING_POWER)),
+        ): vol.All(vol.Coerce(float), vol.Range(min=0, max=10000)),
+        vol.Optional(
+            CONF_OCCUPANCY_COOKING_DURATION,
+            default=float(_g(cfg, CONF_OCCUPANCY_COOKING_DURATION, DEFAULT_OCCUPANCY_COOKING_DURATION)),
+        ): vol.All(vol.Coerce(float), vol.Range(min=60, max=7200)),
+        vol.Optional(
+            CONF_OCCUPANCY_COOKING_EVENTS_PER_DAY,
+            default=float(_g(cfg, CONF_OCCUPANCY_COOKING_EVENTS_PER_DAY, DEFAULT_OCCUPANCY_COOKING_EVENTS_PER_DAY)),
+        ): vol.All(vol.Coerce(float), vol.Range(min=0, max=10)),
+        vol.Optional(
+            CONF_OCCUPANCY_SEED,
+            default=int(_g(cfg, CONF_OCCUPANCY_SEED, DEFAULT_OCCUPANCY_SEED)),
+        ): vol.All(vol.Coerce(int), vol.Range(min=0, max=999999)),
+
+        # --- F-06  Wind effect on heat loss ---
+        vol.Optional(
+            CONF_WIND_SPEED,
+            default=float(_g(cfg, CONF_WIND_SPEED, DEFAULT_WIND_SPEED)),
+        ): vol.All(vol.Coerce(float), vol.Range(min=0, max=50)),
+        vol.Optional(
+            CONF_WIND_COEFFICIENT,
+            default=float(_g(cfg, CONF_WIND_COEFFICIENT, DEFAULT_WIND_COEFFICIENT)),
+        ): vol.All(vol.Coerce(float), vol.Range(min=0, max=0.5)),
+
+        # --- F-14  Rain / moisture effect ---
+        vol.Optional(
+            CONF_RAIN_INTENSITY,
+            default=float(_g(cfg, CONF_RAIN_INTENSITY, DEFAULT_RAIN_INTENSITY)),
+        ): vol.All(vol.Coerce(float), vol.Range(min=0, max=1)),
+        vol.Optional(
+            CONF_RAIN_MOISTURE_FACTOR,
+            default=float(_g(cfg, CONF_RAIN_MOISTURE_FACTOR, DEFAULT_RAIN_MOISTURE_FACTOR)),
+        ): vol.All(vol.Coerce(float), vol.Range(min=0, max=0.5)),
+    })
 
 
 # ---------------------------------------------------------------------------
