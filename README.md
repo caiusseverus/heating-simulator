@@ -236,6 +236,43 @@ Room temperature, fabric temperature (R2C2 models), and radiator temperature (ra
 
 ---
 
+## Sensor Imperfection
+
+The `sensor.*_room_temperature` entity supports an optional post-processing pipeline that degrades the reported value to simulate real-world sensor behaviour. The thermal model always evolves at full precision; only the value reported to Home Assistant is affected. All stages are disabled when set to 0 (the default), preserving backwards-compatible behaviour.
+
+The pipeline is configured in the second step of the options flow (**Settings → Devices & Services → Heating Simulator → Configure**).
+
+### Pipeline stages (applied in order)
+
+| Stage | Parameter | Unit | Default | Description |
+|---|---|---|---|---|
+| 1. Sensor lag | `sensor_lag_tau` | s | 0 | First-order low-pass filter time constant. Simulates the thermal mass of the sensor housing. α = dt / (τ + dt) per tick. |
+| 2. Bias | `sensor_bias` | °C | 0 | Fixed additive offset. Simulates a miscalibrated sensor. A positive value causes the reported temperature to read high, which typically causes a controller to under-heat. |
+| 3. Noise | `sensor_noise_std_dev` | °C | 0 | Gaussian noise standard deviation. Sampled independently each tick. |
+| 4. Quantisation | `sensor_quantisation` | °C | 0 | Minimum reportable step. The value is rounded to the nearest multiple of this parameter (e.g. 0.5 → reported in 0.5 °C increments). |
+| 5. Rate limit | `sensor_update_rate` | s | 0 | Minimum interval between state changes. If this interval has not elapsed since the last reported value, the previous value is re-emitted. Set to 0 to report on every simulation tick. |
+
+### Companion entity
+
+`sensor.*_true_room_temperature` exposes the raw model temperature before any pipeline stage. Use it alongside `sensor.*_room_temperature` to observe the effect of the active imperfections. This entity is always available and does not participate in state restoration.
+
+### Known behaviours
+
+**Sensor chattering.** When `sensor_noise_std_dev` is close to half the `sensor_quantisation` step (e.g. noise σ = 0.25 °C with 0.5 °C quantisation), the reported value may alternate rapidly between two adjacent quanta. This is physically realistic — it reflects real TRV behaviour — but may be surprising. Increase `sensor_update_rate` to suppress it.
+
+**Apparent dead sensor with rate limiting.** When `sensor_update_rate` is set and the room temperature changes slowly, the sensor may hold the same value for extended periods. Home Assistant's state machine suppresses state-change events when the value is unchanged. Automations that trigger on `state_changed` will not fire during these periods. This is an intentional simulation of the Zigbee/Z-Wave TRV failure mode where slow polling causes controllers to perceive a frozen sensor.
+
+### Example presets (for reference)
+
+| Scenario | `sensor_lag_tau` | `sensor_bias` | `sensor_noise_std_dev` | `sensor_quantisation` | `sensor_update_rate` |
+|---|---|---|---|---|---|
+| Ideal (default) | 0 | 0 | 0 | 0 | 0 |
+| Budget TRV | 0 | 0 | 0.5 | 0.5 | 60 |
+| Smart TRV (Zigbee) | 10 | 0 | 0.1 | 0.1 | 30 |
+| Miscalibrated sensor | 0 | +2.0 | 0.1 | 0 | 0 |
+
+---
+
 ## Entities
 
 ### All models
