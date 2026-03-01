@@ -7,7 +7,10 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, MODEL_RADIATOR, MODEL_R2C2, MODEL_R2C2_RADIATOR
+from .const import (
+    DOMAIN, MODEL_RADIATOR, MODEL_R2C2, MODEL_R2C2_RADIATOR,
+    DEFAULT_WIND_COEFFICIENT, DEFAULT_RAIN_MOISTURE_FACTOR,
+)
 from . import HeatingSimulator
 
 
@@ -28,6 +31,16 @@ async def async_setup_entry(
 
     if simulator.model_type in (MODEL_RADIATOR, MODEL_R2C2_RADIATOR):
         entities.append(FlowTempOverride(simulator, entry))
+
+    # Weather disturbance number entities — only shown when the
+    # corresponding sensitivity coefficient is non-zero (i.e. the feature
+    # is intentionally enabled in config). If the coefficient is 0 the
+    # slider would have no effect, which would be confusing.
+    cfg = {**entry.data, **entry.options}
+    if float(cfg.get("weather_wind_coefficient", DEFAULT_WIND_COEFFICIENT)) > 0:
+        entities.append(WindSpeedNumber(simulator, entry))
+    if float(cfg.get("weather_rain_moisture_factor", DEFAULT_RAIN_MOISTURE_FACTOR)) > 0:
+        entities.append(RainIntensityNumber(simulator, entry))
 
     async_add_entities(entities)
 
@@ -152,3 +165,58 @@ class FlowTempOverride(_BaseNumber):
     async def async_set_native_value(self, value: float) -> None:
         self._sim.model.set_flow_temperature(value)
         self._sim._notify_listeners()
+
+
+class WindSpeedNumber(_BaseNumber):
+    """
+    Live wind speed input (m/s) for the F-06 wind effect on heat loss.
+
+    Only created when wind_coefficient > 0 in config, so the slider is
+    never shown if the feature is disabled. Changing this value takes
+    effect on the very next simulator tick without any reload.
+    """
+    _attr_name = "Wind Speed"
+    _attr_native_min_value = 0.0
+    _attr_native_max_value = 50.0
+    _attr_native_step = 0.5
+    _attr_native_unit_of_measurement = "m/s"
+    _attr_mode = NumberMode.SLIDER
+    _attr_icon = "mdi:weather-windy"
+
+    def __init__(self, sim, entry):
+        super().__init__(sim, entry)
+        self._attr_unique_id = f"{entry.entry_id}_wind_speed"
+
+    @property
+    def native_value(self):
+        return self._sim.wind_speed
+
+    async def async_set_native_value(self, value: float) -> None:
+        self._sim.set_weather(wind_speed_m_s=value)
+
+
+class RainIntensityNumber(_BaseNumber):
+    """
+    Live rain intensity input (0-1) for the F-14 rain/moisture effect.
+
+    Only created when rain_moisture_factor > 0 in config. 0 = dry,
+    1 = heavy rain. Changing this value takes effect on the next tick.
+    """
+    _attr_name = "Rain Intensity"
+    _attr_native_min_value = 0.0
+    _attr_native_max_value = 1.0
+    _attr_native_step = 0.05
+    _attr_native_unit_of_measurement = ""
+    _attr_mode = NumberMode.SLIDER
+    _attr_icon = "mdi:weather-rainy"
+
+    def __init__(self, sim, entry):
+        super().__init__(sim, entry)
+        self._attr_unique_id = f"{entry.entry_id}_rain_intensity"
+
+    @property
+    def native_value(self):
+        return self._sim.rain_intensity
+
+    async def async_set_native_value(self, value: float) -> None:
+        self._sim.set_weather(rain_intensity_fraction=value)

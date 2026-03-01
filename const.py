@@ -200,6 +200,7 @@ DEFAULT_RAIN_MOISTURE_FACTOR = 0.0
 # Reset action
 # ---------------------------------------------------------------------------
 ACTION_RESET = "reset_model"
+ACTION_SET_WEATHER = "set_weather"
 
 PRESET_COLD_START       = "cold_start"       # all nodes at external temp — heating off for days
 PRESET_OVERNIGHT        = "overnight"        # air 16°C, fabric 14°C — heating off overnight

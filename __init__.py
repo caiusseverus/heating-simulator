@@ -87,6 +87,7 @@ from .const import (
     DEFAULT_UPDATE_INTERVAL,
     # reset action
     ACTION_RESET,
+    ACTION_SET_WEATHER,
     PRESET_COLD_START,
     PRESET_OVERNIGHT,
     PRESET_ROOM_TEMPERATURE,
@@ -111,6 +112,16 @@ from .disturbances import ExternalTempProfile, OccupancyProfile, WeatherProfile
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.SENSOR, Platform.NUMBER, Platform.SWITCH]
+
+_SET_WEATHER_SERVICE_SCHEMA = vol.Schema(
+    {
+        vol.Optional("device_id"): vol.Any(str, [str]),
+        vol.Optional("entity_id"): vol.Any(str, [str]),
+        vol.Optional("area_id"): vol.Any(str, [str]),
+        vol.Optional("wind_speed_m_s"): vol.All(vol.Coerce(float), vol.Range(min=0, max=50)),
+        vol.Optional("rain_intensity_fraction"): vol.All(vol.Coerce(float), vol.Range(min=0, max=1)),
+    }
+)
 
 _RESET_SERVICE_SCHEMA = vol.Schema(
     {
@@ -181,6 +192,38 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             schema=_RESET_SERVICE_SCHEMA,
         )
 
+    async def _handle_set_weather(call) -> None:
+        """Handle the set_weather service call."""
+        target_devices = call.data.get("device_id")
+        target_entry_ids: set[str] | None = None
+        if target_devices:
+            if isinstance(target_devices, str):
+                target_devices = [target_devices]
+            dev_reg = dr.async_get(hass)
+            target_entry_ids = set()
+            for device_id in target_devices:
+                device = dev_reg.async_get(device_id)
+                if device is None:
+                    continue
+                for entry_id in device.config_entries:
+                    if entry_id in hass.data[DOMAIN]:
+                        target_entry_ids.add(entry_id)
+
+        for entry_id, sim in hass.data[DOMAIN].items():
+            if target_entry_ids is None or entry_id in target_entry_ids:
+                sim.set_weather(
+                    wind_speed_m_s=call.data.get("wind_speed_m_s"),
+                    rain_intensity_fraction=call.data.get("rain_intensity_fraction"),
+                )
+
+    if not hass.services.has_service(DOMAIN, ACTION_SET_WEATHER):
+        hass.services.async_register(
+            DOMAIN,
+            ACTION_SET_WEATHER,
+            _handle_set_weather,
+            schema=_SET_WEATHER_SERVICE_SCHEMA,
+        )
+
     return True
 
 
@@ -191,6 +234,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Remove the service only when the last instance is unloaded
     if not hass.data[DOMAIN]:
         hass.services.async_remove(DOMAIN, ACTION_RESET)
+        hass.services.async_remove(DOMAIN, ACTION_SET_WEATHER)
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
@@ -621,6 +665,36 @@ class HeatingSimulator:
                 self.model.set_flow_temperature(float(new_state.state))
             except (ValueError, AttributeError):
                 pass
+
+    # ------------------------------------------------------------------
+    # Weather control (live update without reload)
+    # ------------------------------------------------------------------
+
+    def set_weather(
+        self,
+        wind_speed_m_s: float | None = None,
+        rain_intensity_fraction: float | None = None,
+    ) -> None:
+        """Update weather disturbance inputs live.
+
+        Only the supplied arguments are changed; omitted arguments leave
+        the current value unchanged. Coefficients (wind_coefficient,
+        rain_moisture_factor) stay as configured -- they are calibration
+        constants, not operational inputs.
+        """
+        if wind_speed_m_s is not None:
+            self._weather_profile.wind_speed_m_s = max(0.0, float(wind_speed_m_s))
+        if rain_intensity_fraction is not None:
+            self._weather_profile.rain_intensity_fraction = max(0.0, min(1.0, float(rain_intensity_fraction)))
+        self._notify_listeners()
+
+    @property
+    def wind_speed(self) -> float:
+        return self._weather_profile.wind_speed_m_s
+
+    @property
+    def rain_intensity(self) -> float:
+        return self._weather_profile.rain_intensity_fraction
 
     # ------------------------------------------------------------------
     # Power control (unified API for entities)
