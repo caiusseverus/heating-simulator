@@ -240,10 +240,15 @@ class HeatingSimulator:
         self._unsub_solar = None
         self._unsub_flow_temp = None
 
-        # Simulated time counter (seconds). Increments by update_interval on each
-        # tick. Used by disturbance profiles to determine time-of-day. Starts at 0
-        # (midnight) and increases indefinitely — profiles use modulo internally.
-        self._sim_time_s: float = 0.0
+        # Simulated time counter (seconds since midnight of day 0).
+        # Seeded from the real wall-clock so that simulated day aligns with the
+        # actual calendar day. Without this, loading the integration at 11pm would
+        # make simulated 07:00 (when occupancy starts) arrive at 06:00 real time —
+        # causing occupancy at the wrong real-world hours.
+        import datetime as _dt
+        _now = _dt.datetime.now()
+        _midnight = _now.replace(hour=0, minute=0, second=0, microsecond=0)
+        self._sim_time_s: float = (_now - _midnight).total_seconds()
 
         # Disturbance profiles — rebuilt from config on each reload.
         self._ext_temp_profile: ExternalTempProfile = self._build_ext_temp_profile(config)
