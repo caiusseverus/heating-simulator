@@ -65,6 +65,71 @@ def _clamp(v: float, lo: float, hi: float) -> float:
 
 C_WATER = 4182.0  # J/(kg·°C)
 
+# ---------------------------------------------------------------------------
+# Valve characteristic curves
+# ---------------------------------------------------------------------------
+# Many radiator TRVs are "quick opening" types: very little flow at small
+# openings, then a rapid crack-open followed by near-saturation.  The curve
+# below is a piecewise-linear fit to typical TRV behaviour:
+#
+#   Position  Flow
+#      0%      0%
+#      1%      1%    — nearly sealed, seat leakage only
+#      2%      3.1%  — quadratic-ish seat flow
+#      3%      8.5%  — still seat-dominated
+#      5%     65%    — valve cracks open rapidly
+#      7%     80%
+#      9%     83%
+#     10%     84.5%
+#     14%     89%    — then linear through to 100% at full stroke
+#    100%    100%
+#
+_QUICK_OPENING_CURVE: tuple[tuple[float, float], ...] = (
+    (0.00, 0.000),
+    (0.01, 0.010),
+    (0.02, 0.031),
+    (0.03, 0.085),
+    (0.05, 0.650),
+    (0.07, 0.800),
+    (0.09, 0.830),
+    (0.10, 0.845),
+    (0.14, 0.890),
+    (1.00, 1.000),
+)
+
+
+def _interp1d(x: float, curve: tuple[tuple[float, float], ...]) -> float:
+    """Piecewise-linear interpolation through a sorted (x, y) table."""
+    if x <= curve[0][0]:
+        return curve[0][1]
+    if x >= curve[-1][0]:
+        return curve[-1][1]
+    for i in range(len(curve) - 1):
+        x0, y0 = curve[i]
+        x1, y1 = curve[i + 1]
+        if x0 <= x <= x1:
+            return y0 + (y1 - y0) * (x - x0) / (x1 - x0)
+    return curve[-1][1]
+
+
+def _valve_flow(position: float, characteristic: str) -> float:
+    """Map valve position (0–1) to actual flow fraction (0–1).
+
+    Parameters
+    ----------
+    position:
+        Valve position from 0 (closed) to 1 (fully open).
+    characteristic:
+        ``"linear"``        — flow proportional to position
+        ``"quick_opening"`` — piecewise-linear curve modelling typical TRV
+                              crack-open behaviour (see _QUICK_OPENING_CURVE)
+    """
+    if position <= 0.0:
+        return 0.0
+    if characteristic == "quick_opening":
+        return _interp1d(position, _QUICK_OPENING_CURVE)
+    return position  # linear
+
 
 # ---------------------------------------------------------------------------
 # Model 1 — Simple R1C1
@@ -445,6 +510,7 @@ class WetRadiatorModel:
         heat_loss_coeff: float = 50.0,
         c_room: float = 15_000.0,
         pipe_delay: float = 0.0,
+        valve_characteristic: str = "linear",
         initial_temp: float = 18.0,
         initial_external_temp: float = 5.0,
     ):
@@ -456,6 +522,7 @@ class WetRadiatorModel:
         self.heat_loss_coeff = heat_loss_coeff
         self.c_room = c_room
         self.pipe_delay = pipe_delay
+        self.valve_characteristic = valve_characteristic
 
         # State
         self.t_rad: float = initial_temp    # radiator starts cold (= room temp)
@@ -557,8 +624,9 @@ class WetRadiatorModel:
         # --- Heat input to radiator from boiler ---
         # Water carries (T_flow - T_rad) * m_dot * C_water watts into radiator
         # If T_rad >= T_flow no heat flows in (physically cannot overheat)
+        effective_flow = _valve_flow(effective_valve, self.valve_characteristic)
         delta_flow = max(0.0, self.flow_temperature - self.t_rad)
-        q_in = effective_valve * self.flow_rate_max * C_WATER * delta_flow
+        q_in = effective_flow * self.flow_rate_max * C_WATER * delta_flow
 
         # --- Heat output from radiator to room ---
         # BS EN 442 power law: Q = K * |ΔT|^n
@@ -720,6 +788,7 @@ class R2C2RadiatorModel:
         radiator_convective_fraction: float = 0.75,
         flow_rate_max: float = 0.05,
         pipe_delay: float = 0.0,
+        valve_characteristic: str = "linear",
         # Room — NOTE: c_air must include ALL room contents (furniture etc), not just air
         c_air: float = 350_000.0,
         c_fabric: float = 5_000_000.0,
@@ -742,6 +811,7 @@ class R2C2RadiatorModel:
         self.radiator_convective_fraction = radiator_convective_fraction
         self.flow_rate_max = flow_rate_max
         self.pipe_delay = pipe_delay
+        self.valve_characteristic = valve_characteristic
 
         # Room parameters
         self.c_air = c_air
@@ -842,8 +912,9 @@ class R2C2RadiatorModel:
             effective_valve = self.valve_fraction
 
         # --- Radiator heat input from boiler ---
+        effective_flow = _valve_flow(effective_valve, self.valve_characteristic)
         delta_flow = max(0.0, self.flow_temperature - self.t_rad)
-        q_in = effective_valve * self.flow_rate_max * C_WATER * delta_flow
+        q_in = effective_flow * self.flow_rate_max * C_WATER * delta_flow
 
         # --- Radiator heat output split (BS EN 442 / ISO 11855) ---
         # Q_out total follows the power law referenced to air temperature.

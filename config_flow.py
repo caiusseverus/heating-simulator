@@ -55,6 +55,9 @@ from .const import (
     CONF_HEAT_LOSS_COEFF_RAD,
     CONF_C_ROOM_RAD,
     CONF_PIPE_DELAY,
+    CONF_VALVE_CHARACTERISTIC,
+    VALVE_CHAR_LINEAR,
+    VALVE_CHAR_QUICK_OPENING,
     # calibration
     CONF_CALIB_A,
     CONF_CALIB_B,
@@ -103,6 +106,7 @@ from .const import (
     DEFAULT_HEAT_LOSS_COEFF_RAD,
     DEFAULT_C_ROOM_RAD,
     DEFAULT_PIPE_DELAY,
+    DEFAULT_VALVE_CHARACTERISTIC,
     # external temp profile
     CONF_EXT_TEMP_PROFILE_ENABLED, CONF_EXT_TEMP_BASE, CONF_EXT_TEMP_AMPLITUDE,
     CONF_EXT_TEMP_MIN_HOUR, CONF_EXT_TEMP_MAX_HOUR,
@@ -230,6 +234,9 @@ STEP_RADIATOR_SCHEMA = vol.Schema({
     vol.Required(CONF_PIPE_DELAY, default=DEFAULT_PIPE_DELAY): vol.All(
         vol.Coerce(float), vol.Range(min=0, max=600)
     ),
+    vol.Required(CONF_VALVE_CHARACTERISTIC, default=DEFAULT_VALVE_CHARACTERISTIC): vol.In(
+        [VALVE_CHAR_LINEAR, VALVE_CHAR_QUICK_OPENING]
+    ),
     vol.Optional(CONF_CALIB_A,   default=0.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=10)),
     vol.Optional(CONF_CALIB_TAU, default=0.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=100000)),
     vol.Optional(CONF_CALIB_B,   default=0.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=1)),
@@ -258,6 +265,9 @@ STEP_R2C2_RADIATOR_SCHEMA = vol.Schema({
     ),
     vol.Required(CONF_PIPE_DELAY, default=DEFAULT_PIPE_DELAY): vol.All(
         vol.Coerce(float), vol.Range(min=0, max=600)
+    ),
+    vol.Required(CONF_VALVE_CHARACTERISTIC, default=DEFAULT_VALVE_CHARACTERISTIC): vol.In(
+        [VALVE_CHAR_LINEAR, VALVE_CHAR_QUICK_OPENING]
     ),
     # Room (R2C2)
     vol.Required(CONF_C_AIR, default=DEFAULT_C_AIR): vol.All(
@@ -382,6 +392,9 @@ def _radiator_model_schema(cfg: dict) -> vol.Schema:
         vol.Required(CONF_PIPE_DELAY, default=_g(cfg, CONF_PIPE_DELAY, DEFAULT_PIPE_DELAY)): vol.All(
             vol.Coerce(float), vol.Range(min=0, max=600)
         ),
+        vol.Required(CONF_VALVE_CHARACTERISTIC, default=_g(cfg, CONF_VALVE_CHARACTERISTIC, DEFAULT_VALVE_CHARACTERISTIC)): vol.In(
+            [VALVE_CHAR_LINEAR, VALVE_CHAR_QUICK_OPENING]
+        ),
         vol.Optional(CONF_CALIB_A,   default=0.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=10)),
         vol.Optional(CONF_CALIB_TAU, default=0.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=100000)),
         vol.Optional(CONF_CALIB_B,   default=0.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=1)),
@@ -412,6 +425,9 @@ def _r2c2_radiator_model_schema(cfg: dict) -> vol.Schema:
         ),
         vol.Required(CONF_PIPE_DELAY, default=_g(cfg, CONF_PIPE_DELAY, DEFAULT_PIPE_DELAY)): vol.All(
             vol.Coerce(float), vol.Range(min=0, max=600)
+        ),
+        vol.Required(CONF_VALVE_CHARACTERISTIC, default=_g(cfg, CONF_VALVE_CHARACTERISTIC, DEFAULT_VALVE_CHARACTERISTIC)): vol.In(
+            [VALVE_CHAR_LINEAR, VALVE_CHAR_QUICK_OPENING]
         ),
         # Room (R2C2)
         vol.Required(CONF_C_AIR, default=_g(cfg, CONF_C_AIR, DEFAULT_C_AIR)): vol.All(

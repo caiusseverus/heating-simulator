@@ -47,6 +47,11 @@ CONF_FLOW_RATE_MAX = "flow_rate_max_kg_s"    # kg/s max water flow rate
 CONF_HEAT_LOSS_COEFF_RAD = "heat_loss_coefficient_rad"
 CONF_C_ROOM_RAD = "c_room_rad"              # J/°C  — room thermal mass (rad model)
 CONF_PIPE_DELAY = "pipe_delay_seconds"       # dead-time for hot water to reach radiator
+CONF_VALVE_CHARACTERISTIC = "valve_characteristic"  # flow curve: linear or quick_opening
+
+# Valve characteristic options
+VALVE_CHAR_LINEAR = "linear"
+VALVE_CHAR_QUICK_OPENING = "quick_opening"
 
 # ---------------------------------------------------------------------------
 # Config keys — Behavioural calibration (optional, overrides physical params)
@@ -129,6 +134,7 @@ DEFAULT_FLOW_RATE_MAX = 0.05     # kg/s  (~3 L/min)
 DEFAULT_HEAT_LOSS_COEFF_RAD = 50.0
 DEFAULT_C_ROOM_RAD = 500_000.0   # J/°C  (air + all room contents, same definition as c_air)
 DEFAULT_PIPE_DELAY = 0.0         # seconds
+DEFAULT_VALVE_CHARACTERISTIC = VALVE_CHAR_LINEAR
 
 # ---------------------------------------------------------------------------
 # Config keys — Sensor imperfection suite (F-02, F-04, F-07)
