@@ -1,0 +1,189 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Heating Simulator Setup",
+        "description": "Configure the simulator name, model type, and basic operating parameters.",
+        "data": {
+          "name": "Name",
+          "model_type": "Thermal model",
+          "control_mode": "Control mode",
+          "initial_temperature": "Initial room temperature (°C)",
+          "external_temperature_entity": "External temperature entity (optional)",
+          "external_temperature_fixed": "Fixed external temperature (°C)",
+          "update_interval_seconds": "Update interval (seconds)"
+        },
+        "data_description": {
+          "external_temperature_entity": "Leave blank to use the fixed value below.",
+          "external_temperature_fixed": "Used when no external temperature entity is configured.",
+          "update_interval_seconds": "How often the simulation advances. Lower values are more accurate but use more CPU."
+        }
+      },
+      "model_simple": {
+        "title": "Simple (R1C1) Model Parameters",
+        "description": "Single-zone model with a direct electric heater. Set physical values, or leave calibration fields non-zero to back-calculate from observed behaviour.",
+        "data": {
+          "heater_power_watts": "Heater power (W)",
+          "heat_loss_coefficient": "Heat loss coefficient (W/°C)",
+          "thermal_mass": "Thermal mass (J/°C)",
+          "thermal_inertia": "Thermal inertia time constant (seconds)",
+          "calib_a": "Calibration: heating rate a (°C/min) — leave 0 to skip",
+          "calib_tau": "Calibration: cooling time constant τ (minutes) — leave 0 to skip",
+          "calib_b": "Calibration: cooling rate b = 1/τ — leave 0 to skip"
+        }
+      },
+      "model_r2c2": {
+        "title": "R2C2 Model Parameters",
+        "description": "Two-node model with separate air and building fabric thermal masses. Includes solar gain.",
+        "data": {
+          "heater_power_watts_r2c2": "Heater power (W)",
+          "c_air": "Air node thermal mass (J/°C)",
+          "c_fabric": "Building fabric thermal mass (J/°C)",
+          "r_fabric": "Air-to-fabric thermal resistance (°C/W)",
+          "r_ext": "Fabric-to-outside thermal resistance (°C/W)",
+          "r_infiltration": "Infiltration / ventilation resistance (°C/W)",
+          "window_area_m2": "Window area (m²)",
+          "window_transmittance": "Window solar transmittance (0–1)",
+          "solar_irradiance_entity": "Solar irradiance entity (optional)",
+          "solar_irradiance_fixed": "Fixed solar irradiance (W/m²)",
+          "calib_tau": "Calibration: cooling time constant τ (minutes) — leave 0 to skip",
+          "calib_b": "Calibration: cooling rate b = 1/τ — leave 0 to skip"
+        }
+      },
+      "model_radiator": {
+        "title": "Wet Radiator Model Parameters",
+        "description": "Single-zone model with a hot-water radiator. Heater power is determined by radiator and flow temperature parameters.",
+        "data": {
+          "flow_temperature": "Boiler flow temperature (°C)",
+          "flow_temperature_entity": "Flow temperature entity (optional)",
+          "c_radiator": "Radiator thermal mass — water + metal (J/°C)",
+          "k_radiator": "Radiator emission coefficient (W/°C^n)",
+          "radiator_exponent": "Radiator emission exponent n (1.0–2.0)",
+          "flow_rate_max_kg_s": "Maximum water flow rate (kg/s)",
+          "heat_loss_coefficient_rad": "Room heat loss coefficient (W/°C)",
+          "c_room_rad": "Room thermal mass (J/°C)",
+          "pipe_delay_seconds": "Pipe dead-time — delay before hot water reaches radiator (seconds)",
+          "calib_a": "Calibration: heating rate a (°C/min) — leave 0 to skip",
+          "calib_tau": "Calibration: cooling time constant τ (minutes) — leave 0 to skip",
+          "calib_b": "Calibration: cooling rate b = 1/τ — leave 0 to skip"
+        }
+      },
+      "model_r2c2_radiator": {
+        "title": "R2C2 + Radiator Model Parameters",
+        "description": "Two-node building model driven by a hot-water radiator. Combines R2C2 fabric physics with wet radiator heat delivery.",
+        "data": {
+          "flow_temperature": "Boiler flow temperature (°C)",
+          "flow_temperature_entity": "Flow temperature entity (optional)",
+          "c_radiator": "Radiator thermal mass — water + metal (J/°C)",
+          "k_radiator": "Radiator emission coefficient (W/°C^n)",
+          "radiator_exponent": "Radiator emission exponent n (1.0–2.0)",
+          "radiator_convective_fraction": "Radiator convective fraction (0–1)",
+          "flow_rate_max_kg_s": "Maximum water flow rate (kg/s)",
+          "pipe_delay_seconds": "Pipe dead-time (seconds)",
+          "c_air": "Air node thermal mass (J/°C)",
+          "c_fabric": "Building fabric thermal mass (J/°C)",
+          "r_fabric": "Air-to-fabric thermal resistance (°C/W)",
+          "r_ext": "Fabric-to-outside thermal resistance (°C/W)",
+          "r_infiltration": "Infiltration / ventilation resistance (°C/W)",
+          "window_area_m2": "Window area (m²)",
+          "window_transmittance": "Window solar transmittance (0–1)",
+          "solar_irradiance_entity": "Solar irradiance entity (optional)",
+          "solar_irradiance_fixed": "Fixed solar irradiance (W/m²)",
+          "calib_a": "Calibration: heating rate a (°C/min) — leave 0 to skip",
+          "calib_tau": "Calibration: cooling time constant τ (minutes) — leave 0 to skip",
+          "calib_b": "Calibration: cooling rate b = 1/τ — leave 0 to skip"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Heating Simulator Options",
+        "menu_options": {
+          "general": "General settings",
+          "thermal_model": "Thermal model parameters",
+          "disturbances": "Disturbances",
+          "sensor": "Sensor degradation"
+        }
+      },
+      "general": {
+        "title": "General Settings",
+        "description": "Control mode, external temperature source, and update rate.",
+        "data": {
+          "control_mode": "Control mode",
+          "external_temperature_entity": "External temperature entity (optional)",
+          "external_temperature_fixed": "Fixed external temperature (°C)",
+          "update_interval_seconds": "Update interval (seconds)"
+        },
+        "data_description": {
+          "external_temperature_entity": "Leave blank to use the fixed value below.",
+          "update_interval_seconds": "How often the simulation advances. Lower values are more accurate but use more CPU."
+        }
+      },
+      "thermal_model": {
+        "title": "Thermal Model Parameters",
+        "description": "Physical parameters for the current model type. To change the model type, remove and re-add the integration.",
+        "data": {
+          "heater_power_watts": "Heater power (W)",
+          "heat_loss_coefficient": "Heat loss coefficient (W/°C)",
+          "thermal_mass": "Thermal mass (J/°C)",
+          "thermal_inertia": "Thermal inertia time constant (seconds)",
+          "heater_power_watts_r2c2": "Heater power (W)",
+          "c_air": "Air node thermal mass (J/°C)",
+          "c_fabric": "Building fabric thermal mass (J/°C)",
+          "r_fabric": "Air-to-fabric thermal resistance (°C/W)",
+          "r_ext": "Fabric-to-outside thermal resistance (°C/W)",
+          "r_infiltration": "Infiltration / ventilation resistance (°C/W)",
+          "window_area_m2": "Window area (m²)",
+          "solar_irradiance_fixed": "Fixed solar irradiance (W/m²)",
+          "flow_temperature": "Boiler flow temperature (°C)",
+          "flow_temperature_entity": "Flow temperature entity (optional)",
+          "c_radiator": "Radiator thermal mass — water + metal (J/°C)",
+          "c_room_rad": "Room thermal mass (J/°C)",
+          "k_radiator": "Radiator emission coefficient (W/°C^n)",
+          "flow_rate_max_kg_s": "Maximum water flow rate (kg/s)",
+          "heat_loss_coefficient_rad": "Room heat loss coefficient (W/°C)",
+          "pipe_delay_seconds": "Pipe dead-time (seconds)",
+          "radiator_exponent": "Radiator emission exponent n",
+          "radiator_convective_fraction": "Radiator convective fraction",
+          "calib_a": "Calibration: heating rate a (°C/min) — leave 0 to skip",
+          "calib_tau": "Calibration: cooling time constant τ (minutes) — leave 0 to skip",
+          "calib_b": "Calibration: cooling rate b = 1/τ — leave 0 to skip"
+        }
+      },
+      "disturbances": {
+        "title": "Disturbances",
+        "description": "Simulated occupancy, weather, and external temperature profile effects. Set values to 0 / disabled to deactivate each disturbance.",
+        "data": {
+          "ext_temp_profile_enabled": "Enable daily external temperature profile",
+          "ext_temp_base": "Daily base temperature (°C)",
+          "ext_temp_amplitude": "Daily temperature swing amplitude (°C)",
+          "ext_temp_min_hour": "Hour of daily temperature minimum (0–24)",
+          "ext_temp_max_hour": "Hour of daily temperature maximum (0–24)",
+          "occupancy_enabled": "Enable occupancy simulation",
+          "occupancy_max_occupants": "Maximum number of occupants",
+          "occupancy_cooking_power": "Cooking heat gain (W)",
+          "occupancy_cooking_duration_seconds": "Cooking event duration (seconds)",
+          "occupancy_cooking_events_per_day": "Cooking events per day",
+          "occupancy_seed": "Random seed (0 for different each run)",
+          "wind_speed_m_s": "Wind speed (m/s)",
+          "wind_coefficient": "Wind heat loss coefficient (W·s/m per °C)",
+          "rain_intensity": "Rain intensity (0–1)",
+          "rain_moisture_factor": "Rain moisture heat loss factor (0–0.5)"
+        }
+      },
+      "sensor": {
+        "title": "Sensor Degradation",
+        "description": "Simulate imperfections in the temperature sensor output. Set all values to 0 to disable and report the true simulated temperature.",
+        "data": {
+          "sensor_noise_std_dev": "Noise standard deviation (°C) — Gaussian white noise",
+          "sensor_bias": "Constant bias offset (°C)",
+          "sensor_quantisation_step": "Quantisation step size (°C) — 0 to disable",
+          "sensor_lag_tau": "First-order lag time constant (seconds) — 0 to disable",
+          "sensor_update_rate_seconds": "Sensor update interval (seconds) — 0 for every tick"
+        }
+      }
+    }
+  }
+}
