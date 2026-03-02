@@ -65,3 +65,44 @@ reset_model:
           max: 90
           step: 0.1
           unit_of_measurement: "°C"
+
+set_weather:
+  name: Set weather conditions
+  description: >
+    Update wind speed and/or rain intensity live, without reloading the
+    simulator. Takes effect on the very next simulator tick. Only the
+    supplied fields are changed; omitting a field leaves its current value
+    unchanged. Wind and rain have no effect unless their corresponding
+    sensitivity coefficients (wind_coefficient, rain_moisture_factor) are
+    set to a non-zero value in the simulator options.
+  target:
+    device:
+      integration: heating_simulator
+  fields:
+    wind_speed_m_s:
+      name: Wind speed
+      description: >
+        Wind speed in m/s. 0 = calm. Beaufort 3 (gentle breeze) ~ 4 m/s,
+        Beaufort 5 (fresh breeze) ~ 9 m/s, Beaufort 7 (near gale) ~ 14 m/s.
+        Set to 0 to remove wind effect.
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 50
+          step: 0.5
+          unit_of_measurement: "m/s"
+    rain_intensity_fraction:
+      name: Rain intensity
+      description: >
+        Rain intensity from 0.0 (completely dry) to 1.0 (heavy rain).
+        Increases heat loss through the building fabric as moisture raises
+        the effective thermal conductivity of walls. Set to 0 for dry
+        conditions.
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 1
+          step: 0.05
+          unit_of_measurement: ""

@@ -87,16 +87,41 @@ from .const import (
     DEFAULT_UPDATE_INTERVAL,
     # reset action
     ACTION_RESET,
+    ACTION_SET_WEATHER,
     PRESET_COLD_START,
     PRESET_OVERNIGHT,
     PRESET_ROOM_TEMPERATURE,
     RESET_PRESETS,
+    # F-11 external temp profile
+    CONF_EXT_TEMP_PROFILE_ENABLED, CONF_EXT_TEMP_BASE, CONF_EXT_TEMP_AMPLITUDE,
+    CONF_EXT_TEMP_MIN_HOUR, CONF_EXT_TEMP_MAX_HOUR,
+    DEFAULT_EXT_TEMP_PROFILE_ENABLED, DEFAULT_EXT_TEMP_BASE, DEFAULT_EXT_TEMP_AMPLITUDE,
+    DEFAULT_EXT_TEMP_MIN_HOUR, DEFAULT_EXT_TEMP_MAX_HOUR,
+    # F-05 occupancy
+    CONF_OCCUPANCY_ENABLED, CONF_OCCUPANCY_MAX_OCCUPANTS, CONF_OCCUPANCY_COOKING_POWER,
+    CONF_OCCUPANCY_COOKING_DURATION, CONF_OCCUPANCY_COOKING_EVENTS_PER_DAY, CONF_OCCUPANCY_SEED,
+    DEFAULT_OCCUPANCY_ENABLED, DEFAULT_OCCUPANCY_MAX_OCCUPANTS, DEFAULT_OCCUPANCY_COOKING_POWER,
+    DEFAULT_OCCUPANCY_COOKING_DURATION, DEFAULT_OCCUPANCY_COOKING_EVENTS_PER_DAY, DEFAULT_OCCUPANCY_SEED,
+    # F-06, F-14 weather
+    CONF_WIND_SPEED, CONF_WIND_COEFFICIENT, CONF_RAIN_INTENSITY, CONF_RAIN_MOISTURE_FACTOR,
+    DEFAULT_WIND_SPEED, DEFAULT_WIND_COEFFICIENT, DEFAULT_RAIN_INTENSITY, DEFAULT_RAIN_MOISTURE_FACTOR,
 )
 from .thermal_model import SimpleThermalModel, R2C2ThermalModel, WetRadiatorModel, R2C2RadiatorModel
+from .disturbances import ExternalTempProfile, OccupancyProfile, WeatherProfile
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.SENSOR, Platform.NUMBER, Platform.SWITCH]
+
+_SET_WEATHER_SERVICE_SCHEMA = vol.Schema(
+    {
+        vol.Optional("device_id"): vol.Any(str, [str]),
+        vol.Optional("entity_id"): vol.Any(str, [str]),
+        vol.Optional("area_id"): vol.Any(str, [str]),
+        vol.Optional("wind_speed_m_s"): vol.All(vol.Coerce(float), vol.Range(min=0, max=50)),
+        vol.Optional("rain_intensity_fraction"): vol.All(vol.Coerce(float), vol.Range(min=0, max=1)),
+    }
+)
 
 _RESET_SERVICE_SCHEMA = vol.Schema(
     {
@@ -167,6 +192,38 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             schema=_RESET_SERVICE_SCHEMA,
         )
 
+    async def _handle_set_weather(call) -> None:
+        """Handle the set_weather service call."""
+        target_devices = call.data.get("device_id")
+        target_entry_ids: set[str] | None = None
+        if target_devices:
+            if isinstance(target_devices, str):
+                target_devices = [target_devices]
+            dev_reg = dr.async_get(hass)
+            target_entry_ids = set()
+            for device_id in target_devices:
+                device = dev_reg.async_get(device_id)
+                if device is None:
+                    continue
+                for entry_id in device.config_entries:
+                    if entry_id in hass.data[DOMAIN]:
+                        target_entry_ids.add(entry_id)
+
+        for entry_id, sim in hass.data[DOMAIN].items():
+            if target_entry_ids is None or entry_id in target_entry_ids:
+                sim.set_weather(
+                    wind_speed_m_s=call.data.get("wind_speed_m_s"),
+                    rain_intensity_fraction=call.data.get("rain_intensity_fraction"),
+                )
+
+    if not hass.services.has_service(DOMAIN, ACTION_SET_WEATHER):
+        hass.services.async_register(
+            DOMAIN,
+            ACTION_SET_WEATHER,
+            _handle_set_weather,
+            schema=_SET_WEATHER_SERVICE_SCHEMA,
+        )
+
     return True
 
 
@@ -177,6 +234,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Remove the service only when the last instance is unloaded
     if not hass.data[DOMAIN]:
         hass.services.async_remove(DOMAIN, ACTION_RESET)
+        hass.services.async_remove(DOMAIN, ACTION_SET_WEATHER)
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
@@ -225,6 +283,21 @@ class HeatingSimulator:
         self._unsub_ext_temp = None
         self._unsub_solar = None
         self._unsub_flow_temp = None
+
+        # Simulated time counter (seconds since midnight of day 0).
+        # Seeded from the real wall-clock so that simulated day aligns with the
+        # actual calendar day. Without this, loading the integration at 11pm would
+        # make simulated 07:00 (when occupancy starts) arrive at 06:00 real time —
+        # causing occupancy at the wrong real-world hours.
+        import datetime as _dt
+        _now = _dt.datetime.now()
+        _midnight = _now.replace(hour=0, minute=0, second=0, microsecond=0)
+        self._sim_time_s: float = (_now - _midnight).total_seconds()
+
+        # Disturbance profiles — rebuilt from config on each reload.
+        self._ext_temp_profile: ExternalTempProfile = self._build_ext_temp_profile(config)
+        self._occupancy_profile: OccupancyProfile = self._build_occupancy_profile(config)
+        self._weather_profile: WeatherProfile = self._build_weather_profile(config)
 
     # ------------------------------------------------------------------
     # Model factory
@@ -290,6 +363,37 @@ class HeatingSimulator:
                 initial_temp=initial_temp,
                 initial_external_temp=initial_ext,
             )
+
+    # ------------------------------------------------------------------
+    # Disturbance profile factories
+    # ------------------------------------------------------------------
+
+    def _build_ext_temp_profile(self, cfg: dict) -> ExternalTempProfile:
+        return ExternalTempProfile(
+            enabled=bool(cfg.get(CONF_EXT_TEMP_PROFILE_ENABLED, DEFAULT_EXT_TEMP_PROFILE_ENABLED)),
+            base_temp=float(cfg.get(CONF_EXT_TEMP_BASE, DEFAULT_EXT_TEMP_BASE)),
+            temp_amplitude=float(cfg.get(CONF_EXT_TEMP_AMPLITUDE, DEFAULT_EXT_TEMP_AMPLITUDE)),
+            min_hour=float(cfg.get(CONF_EXT_TEMP_MIN_HOUR, DEFAULT_EXT_TEMP_MIN_HOUR)),
+            max_hour=float(cfg.get(CONF_EXT_TEMP_MAX_HOUR, DEFAULT_EXT_TEMP_MAX_HOUR)),
+        )
+
+    def _build_occupancy_profile(self, cfg: dict) -> OccupancyProfile:
+        return OccupancyProfile(
+            enabled=bool(cfg.get(CONF_OCCUPANCY_ENABLED, DEFAULT_OCCUPANCY_ENABLED)),
+            max_occupants=int(cfg.get(CONF_OCCUPANCY_MAX_OCCUPANTS, DEFAULT_OCCUPANCY_MAX_OCCUPANTS)),
+            cooking_power_watts=float(cfg.get(CONF_OCCUPANCY_COOKING_POWER, DEFAULT_OCCUPANCY_COOKING_POWER)),
+            cooking_duration_s=float(cfg.get(CONF_OCCUPANCY_COOKING_DURATION, DEFAULT_OCCUPANCY_COOKING_DURATION)),
+            cooking_events_per_day=float(cfg.get(CONF_OCCUPANCY_COOKING_EVENTS_PER_DAY, DEFAULT_OCCUPANCY_COOKING_EVENTS_PER_DAY)),
+            seed=int(cfg.get(CONF_OCCUPANCY_SEED, DEFAULT_OCCUPANCY_SEED)),
+        )
+
+    def _build_weather_profile(self, cfg: dict) -> WeatherProfile:
+        return WeatherProfile(
+            wind_speed_m_s=float(cfg.get(CONF_WIND_SPEED, DEFAULT_WIND_SPEED)),
+            wind_coefficient=float(cfg.get(CONF_WIND_COEFFICIENT, DEFAULT_WIND_COEFFICIENT)),
+            rain_intensity_fraction=float(cfg.get(CONF_RAIN_INTENSITY, DEFAULT_RAIN_INTENSITY)),
+            rain_moisture_factor=float(cfg.get(CONF_RAIN_MOISTURE_FACTOR, DEFAULT_RAIN_MOISTURE_FACTOR)),
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -509,7 +613,26 @@ class HeatingSimulator:
 
     @callback
     def _async_tick(self, _now) -> None:
-        self.model.step(self.update_interval)
+        dt = self.update_interval
+
+        # --- F-11: External temperature profile ---
+        # When the profile is active it overrides both the fixed value and any
+        # tracked entity. The entity subscription still runs but the profile
+        # wins on every tick. When disabled, the model keeps whatever T_ext was
+        # last set (from entity or fixed config) — no change to existing behaviour.
+        if self._ext_temp_profile.enabled:
+            t_ext = self._ext_temp_profile.temperature_at(self._sim_time_s)
+            self.model.set_external_temperature(t_ext)
+
+        # --- F-05: Occupancy / internal gain ---
+        self.model.internal_gain_watts = self._occupancy_profile.gain_at(self._sim_time_s)
+
+        # --- F-06, F-14: Wind and rain effects on heat loss ---
+        self.model.weather_k_multiplier = self._weather_profile.multiplier
+
+        # Advance simulated clock and step the physics model
+        self._sim_time_s += dt
+        self.model.step(dt)
         self._notify_listeners()
 
     # ------------------------------------------------------------------
@@ -542,6 +665,36 @@ class HeatingSimulator:
                 self.model.set_flow_temperature(float(new_state.state))
             except (ValueError, AttributeError):
                 pass
+
+    # ------------------------------------------------------------------
+    # Weather control (live update without reload)
+    # ------------------------------------------------------------------
+
+    def set_weather(
+        self,
+        wind_speed_m_s: float | None = None,
+        rain_intensity_fraction: float | None = None,
+    ) -> None:
+        """Update weather disturbance inputs live.
+
+        Only the supplied arguments are changed; omitted arguments leave
+        the current value unchanged. Coefficients (wind_coefficient,
+        rain_moisture_factor) stay as configured -- they are calibration
+        constants, not operational inputs.
+        """
+        if wind_speed_m_s is not None:
+            self._weather_profile.wind_speed_m_s = max(0.0, float(wind_speed_m_s))
+        if rain_intensity_fraction is not None:
+            self._weather_profile.rain_intensity_fraction = max(0.0, min(1.0, float(rain_intensity_fraction)))
+        self._notify_listeners()
+
+    @property
+    def wind_speed(self) -> float:
+        return self._weather_profile.wind_speed_m_s
+
+    @property
+    def rain_intensity(self) -> float:
+        return self._weather_profile.rain_intensity_fraction
 
     # ------------------------------------------------------------------
     # Power control (unified API for entities)

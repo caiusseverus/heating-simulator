@@ -109,6 +109,11 @@ class SimpleThermalModel:
         self.effective_heater_power: float = 0.0
         self.power_setpoint: float = 0.0
 
+        # Disturbance inputs (F-05, F-06, F-14) — default to neutral values.
+        # Set each tick by the simulator coordinator before calling step().
+        self.internal_gain_watts: float = 0.0   # F-05: occupancy + cooking (W)
+        self.weather_k_multiplier: float = 1.0  # F-06/F-14: wind/rain factor on K
+
         self.heating_rate: float = 0.0
         self.heat_loss_rate: float = 0.0
         self.net_heat_rate: float = 0.0
@@ -126,9 +131,10 @@ class SimpleThermalModel:
         # is needed for stability. The room temperature ODE is also stable at typical
         # update intervals (τ_room = C/K is on the order of hours).
         self._euler(dt)
-        self.heating_rate = self.effective_heater_power / self.thermal_mass
+        k_eff = self.heat_loss_coeff * self.weather_k_multiplier
+        self.heating_rate = (self.effective_heater_power + self.internal_gain_watts) / self.thermal_mass
         self.heat_loss_rate = (
-            self.heat_loss_coeff * (self.temperature - self.external_temperature) / self.thermal_mass
+            k_eff * (self.temperature - self.external_temperature) / self.thermal_mass
         )
         self.net_heat_rate = self.heating_rate - self.heat_loss_rate
 
@@ -144,13 +150,17 @@ class SimpleThermalModel:
             )
         else:
             self.effective_heater_power = target
-        q_loss = self.heat_loss_coeff * (self.temperature - self.external_temperature)
-        self.temperature += (self.effective_heater_power - q_loss) / self.thermal_mass * dt
+        # F-06/F-14: apply weather multiplier to effective K before computing loss
+        k_eff = self.heat_loss_coeff * self.weather_k_multiplier
+        q_loss = k_eff * (self.temperature - self.external_temperature)
+        # F-05: add internal gain (occupancy + cooking) alongside heater output
+        self.temperature += (self.effective_heater_power + self.internal_gain_watts - q_loss) / self.thermal_mass * dt
 
     @property
     def steady_state_temperature(self) -> float:
         q = self.power_setpoint * self.heater_power_watts
-        return self.external_temperature + q / self.heat_loss_coeff
+        k_eff = self.heat_loss_coeff * self.weather_k_multiplier
+        return self.external_temperature + (q + self.internal_gain_watts) / k_eff
 
     @property
     def time_to_equilibrium_tau(self) -> float:
@@ -162,6 +172,8 @@ class SimpleThermalModel:
             "steady_state_temp": round(self.steady_state_temperature, 2),
             "room_tau_s": round(self.time_to_equilibrium_tau, 1),
             "heater_inertia_tau_s": self.thermal_inertia_tau,
+            "internal_gain_w": round(self.internal_gain_watts, 1),
+            "weather_k_multiplier": round(self.weather_k_multiplier, 3),
         }
 
 
@@ -233,6 +245,10 @@ class R2C2ThermalModel:
         self.power_setpoint: float = 0.0
         self.effective_heater_power: float = 0.0
 
+        # Disturbance inputs (F-05, F-06, F-14) — default to neutral values.
+        self.internal_gain_watts: float = 0.0   # F-05: occupancy + cooking (W) → air node
+        self.weather_k_multiplier: float = 1.0  # F-06/F-14: scales 1/r_ext and 1/r_inf
+
         # Diagnostics
         self.heating_rate: float = 0.0
         self.heat_loss_rate: float = 0.0
@@ -286,14 +302,18 @@ class R2C2ThermalModel:
         # Fabric ↔ air exchange
         q_fab_to_air = (self.t_fabric - self.t_air) / self.r_fabric
 
-        # Air → outside via infiltration
-        q_inf = (self.t_air - self.external_temperature) / self.r_inf
+        # F-06/F-14: weather multiplier scales conductance on external-facing paths.
+        # r_ext and r_inf are resistances, so effective conductance = multiplier / r.
+        # Air → outside via infiltration (wind raises effective conductance)
+        q_inf = (self.t_air - self.external_temperature) * (self.weather_k_multiplier / self.r_inf)
 
-        # Fabric → outside via conduction
-        q_fab_to_ext = (self.t_fabric - self.external_temperature) / self.r_ext
+        # Fabric → outside via conduction (rain/moisture raises fabric conductance)
+        q_fab_to_ext = (self.t_fabric - self.external_temperature) * (self.weather_k_multiplier / self.r_ext)
 
+        # F-05: internal gain (occupancy + cooking) enters the air node
         dT_air = (
-            self.effective_heater_power + q_solar_air + q_fab_to_air - q_inf
+            self.effective_heater_power + self.internal_gain_watts
+            + q_solar_air + q_fab_to_air - q_inf
         ) / self.c_air
 
         dT_fab = (
@@ -306,21 +326,21 @@ class R2C2ThermalModel:
         self.fabric_heat_flux = q_fab_to_air
 
     def _update_diagnostics(self) -> None:
-        self.heating_rate = self.effective_heater_power / self.c_air
-        q_inf_loss = (self.t_air - self.external_temperature) / self.r_inf
-        q_fab_loss = (self.t_fabric - self.external_temperature) / self.r_ext
+        self.heating_rate = (self.effective_heater_power + self.internal_gain_watts) / self.c_air
+        q_inf_loss = (self.t_air - self.external_temperature) * (self.weather_k_multiplier / self.r_inf)
+        q_fab_loss = (self.t_fabric - self.external_temperature) * (self.weather_k_multiplier / self.r_ext)
         total_loss_to_air = (q_inf_loss * self.c_air + q_fab_loss * self.c_air) / (self.c_air + self.c_fabric)
         self.heat_loss_rate = (q_inf_loss + max(0, -self.fabric_heat_flux)) / self.c_air
         self.net_heat_rate = (
-            (self.effective_heater_power + self.solar_gain_watts)
-            - (q_inf_loss + max(0, (self.t_fabric - self.external_temperature) / self.r_ext))
+            (self.effective_heater_power + self.internal_gain_watts + self.solar_gain_watts)
+            - (q_inf_loss + max(0, (self.t_fabric - self.external_temperature) * (self.weather_k_multiplier / self.r_ext)))
         ) / self.c_air
 
     @property
     def total_heat_loss_watts(self) -> float:
-        """Total instantaneous heat loss through all paths (W)."""
-        q_inf = (self.t_air - self.external_temperature) / self.r_inf
-        q_fab = (self.t_fabric - self.external_temperature) / self.r_ext
+        """Total instantaneous heat loss through all paths (W), including weather effects."""
+        q_inf = (self.t_air - self.external_temperature) * (self.weather_k_multiplier / self.r_inf)
+        q_fab = (self.t_fabric - self.external_temperature) * (self.weather_k_multiplier / self.r_ext)
         return q_inf + q_fab
 
     @property
@@ -336,11 +356,17 @@ class R2C2ThermalModel:
         return {
             "fabric_temperature": round(self.t_fabric, 2),
             "solar_gain_w": round(self.solar_gain_watts, 1),
+            "internal_gain_w": round(self.internal_gain_watts, 1),
             "fabric_to_air_flux_w": round(self.fabric_heat_flux, 1),
             "total_heat_loss_w": round(self.total_heat_loss_watts, 1),
             "effective_u_value_W_per_C": round(self.effective_u_value, 2),
-            "infiltration_loss_w": round((self.t_air - self.external_temperature) / self.r_inf, 1),
-            "fabric_loss_w": round((self.t_fabric - self.external_temperature) / self.r_ext, 1),
+            "weather_k_multiplier": round(self.weather_k_multiplier, 3),
+            "infiltration_loss_w": round(
+                (self.t_air - self.external_temperature) * (self.weather_k_multiplier / self.r_inf), 1
+            ),
+            "fabric_loss_w": round(
+                (self.t_fabric - self.external_temperature) * (self.weather_k_multiplier / self.r_ext), 1
+            ),
         }
 
 
@@ -436,6 +462,10 @@ class WetRadiatorModel:
         self.t_room: float = initial_temp
         self.external_temperature: float = initial_external_temp
         self.valve_fraction: float = 0.0   # 0–1 (= power_setpoint)
+
+        # Disturbance inputs (F-05, F-06, F-14) — default to neutral values.
+        self.internal_gain_watts: float = 0.0   # F-05: occupancy + cooking (W)
+        self.weather_k_multiplier: float = 1.0  # F-06/F-14: wind/rain factor on K
 
         # Pipe delay queue.
         # Each slot represents exactly 1 second of simulated time.
@@ -540,11 +570,14 @@ class WetRadiatorModel:
             q_out = -self.k_radiator * ((-delta_rad_room) ** self.radiator_exponent)
 
         # --- Room heat loss ---
-        q_loss = self.heat_loss_coeff * (self.t_room - self.external_temperature)
+        # F-06/F-14: weather multiplier scales the effective K for room→outside loss
+        k_eff = self.heat_loss_coeff * self.weather_k_multiplier
+        q_loss = k_eff * (self.t_room - self.external_temperature)
 
         # --- Integrate ---
         dT_rad = (q_in - q_out) / self.c_radiator
-        dT_room = (q_out - q_loss) / self.c_room
+        # F-05: internal gain (occupancy + cooking) enters room directly
+        dT_room = (q_out + self.internal_gain_watts - q_loss) / self.c_room
 
         self.t_rad += dT_rad * dt
         self.t_room += dT_room * dt
@@ -555,10 +588,9 @@ class WetRadiatorModel:
 
     def _update_diagnostics(self, dt: float) -> None:
         self._push_pipe_queue(dt)
-        self.heating_rate = self.q_out_watts / self.c_room
-        self.heat_loss_rate = (
-            self.heat_loss_coeff * (self.t_room - self.external_temperature) / self.c_room
-        )
+        k_eff = self.heat_loss_coeff * self.weather_k_multiplier
+        self.heating_rate = (self.q_out_watts + self.internal_gain_watts) / self.c_room
+        self.heat_loss_rate = k_eff * (self.t_room - self.external_temperature) / self.c_room
         self.net_heat_rate = self.heating_rate - self.heat_loss_rate
 
     @property
@@ -590,6 +622,8 @@ class WetRadiatorModel:
     def extra_state(self) -> dict:
         return {
             "radiator_temperature": round(self.t_rad, 2),
+            "internal_gain_w": round(self.internal_gain_watts, 1),
+            "weather_k_multiplier": round(self.weather_k_multiplier, 3),
             "q_in_watts": round(self.q_in_watts, 1),
             "q_out_watts": round(self.q_out_watts, 1),
             "return_temperature": round(self.return_temperature, 2),
@@ -728,6 +762,10 @@ class R2C2RadiatorModel:
         self.solar_irradiance: float = initial_solar
         self.valve_fraction: float = 0.0      # 0–1
 
+        # Disturbance inputs (F-05, F-06, F-14) — default to neutral values.
+        self.internal_gain_watts: float = 0.0   # F-05: occupancy + cooking (W) → air node
+        self.weather_k_multiplier: float = 1.0  # F-06/F-14: wind/rain factor on external resistances
+
         # Pipe delay FIFO queue — each slot = 1 second of simulated time.
         # _pipe_accum accumulates fractional seconds so the queue advances
         # in real simulation-time seconds regardless of step size.
@@ -826,24 +864,26 @@ class R2C2RadiatorModel:
 
         # --- Room heat exchange ---
         q_fab_to_air = (self.t_fabric - self.t_air) / self.r_fabric
-        q_inf        = (self.t_air    - self.external_temperature) / self.r_inf
-        q_fab_to_ext = (self.t_fabric - self.external_temperature) / self.r_ext
+        # F-06/F-14: weather multiplier scales external-facing conductances
+        q_inf        = (self.t_air    - self.external_temperature) * (self.weather_k_multiplier / self.r_inf)
+        q_fab_to_ext = (self.t_fabric - self.external_temperature) * (self.weather_k_multiplier / self.r_ext)
 
         # --- ODEs ---
         dT_rad = (q_in - q_out) / self.c_radiator
 
         dT_air = (
-            q_conv         # convective portion of radiator output → air
+            q_conv                       # convective portion of radiator output → air
             + q_solar_air
-            + q_fab_to_air # fabric convects into air (or absorbs from air if cold)
-            - q_inf        # infiltration loss
+            + q_fab_to_air               # fabric convects into air (or absorbs from air if cold)
+            + self.internal_gain_watts   # F-05: occupancy + cooking gain → air node
+            - q_inf                      # infiltration loss (weather-adjusted)
         ) / self.c_air
 
         dT_fab = (
             q_rad          # radiative portion of radiator output absorbed by fabric
             + q_solar_fab  # solar absorbed by fabric
             - q_fab_to_air # fabric loses heat to air (equal and opposite to dT_air term)
-            - q_fab_to_ext # fabric loses heat to outside
+            - q_fab_to_ext # fabric loses heat to outside (weather-adjusted)
         ) / self.c_fabric
 
         # --- Integrate ---
@@ -872,8 +912,8 @@ class R2C2RadiatorModel:
                 self._pipe_queue.popleft()
 
     def _update_diagnostics(self) -> None:
-        q_inf = (self.t_air - self.external_temperature) / self.r_inf
-        self.heating_rate    = self.q_out_watts / self.c_air
+        q_inf = (self.t_air - self.external_temperature) * (self.weather_k_multiplier / self.r_inf)
+        self.heating_rate    = (self.q_out_watts + self.internal_gain_watts) / self.c_air
         self.heat_loss_rate  = (q_inf + max(0.0, -self.fabric_heat_flux)) / self.c_air
         self.net_heat_rate   = self.heating_rate - self.heat_loss_rate
 
@@ -898,8 +938,9 @@ class R2C2RadiatorModel:
 
     @property
     def total_heat_loss_watts(self) -> float:
-        q_inf = (self.t_air    - self.external_temperature) / self.r_inf
-        q_fab = (self.t_fabric - self.external_temperature) / self.r_ext
+        """Total heat loss through all external paths (W), including weather effects."""
+        q_inf = (self.t_air    - self.external_temperature) * (self.weather_k_multiplier / self.r_inf)
+        q_fab = (self.t_fabric - self.external_temperature) * (self.weather_k_multiplier / self.r_ext)
         return q_inf + q_fab
 
     @property
@@ -920,6 +961,8 @@ class R2C2RadiatorModel:
             "q_rad_to_fabric_watts":     round(self.q_rad_watts, 1),
             "convective_fraction":       self.radiator_convective_fraction,
             "return_temperature":        round(self.return_temperature, 2),
+            "internal_gain_w":           round(self.internal_gain_watts, 1),
+            "weather_k_multiplier":      round(self.weather_k_multiplier, 3),
             "solar_gain_w":              round(self.solar_gain_watts, 1),
             "fabric_to_air_flux_w":      round(self.fabric_heat_flux, 1),
             "total_heat_loss_w":         round(self.total_heat_loss_watts, 1),
