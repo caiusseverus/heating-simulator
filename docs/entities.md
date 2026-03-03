@@ -72,24 +72,14 @@ The `steady_state_temperature` entity includes the following attributes:
 
 | Attribute | Description |
 |---|---|
-| `nominal_output_w_at_dt50` | Radiator nameplate output at standard ΔT50 (W) |
+| `nominal_output_w_dt50` | Radiator nameplate output at standard ΔT50 (W) |
 | `output_fraction` | Current output as a fraction of nominal ΔT50 output |
-| `valve_position_pct` | Current valve position (%) |
-| `pipe_delay_s` | Configured pipe delay (s) |
 
 ---
 
 ### R2C2 + Radiator model (additional entities)
 
-All R2C2 additional entities and all Wet Radiator additional entities, combined.
-
-`sensor.*_radiator_heat_output` additionally reports:
-
-| Attribute | Description |
-|---|---|
-| `q_conv_watts` | Convective portion of output → air node (W) |
-| `q_rad_to_fabric_watts` | Radiative portion of output → fabric node (W) |
-| `convective_fraction` | Configured convective fraction |
+All R2C2 additional entities and all Wet Radiator additional entities, combined. The `sensor.*_radiator_heat_output` entity exposes the same two attributes as in the plain Wet Radiator model.
 
 ---
 
@@ -110,7 +100,7 @@ These entities allow you to drive the simulation and override parameters.
 
 | Entity | Description | Range | Unit |
 |---|---|---|---|
-| `number.*_solar_irradiance_override` | Solar irradiance override. Overrides both entity and fixed value. Set to 0 to return to the configured source. | 0–1 500 | W/m² |
+| `number.*_solar_irradiance_override` | Solar irradiance override. Writes directly to the model; the configured entity or fixed value will resume control on its next state-change event. | 0–1 500 | W/m² |
 
 ---
 
