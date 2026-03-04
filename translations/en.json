@@ -63,9 +63,13 @@
           "heat_loss_coefficient_rad": "Room heat loss coefficient (W/°C)",
           "c_room_rad": "Room thermal mass (J/°C)",
           "pipe_delay_seconds": "Pipe dead-time — delay before hot water reaches radiator (seconds)",
+          "valve_characteristic": "Valve flow characteristic",
           "calib_a": "Calibration: heating rate a (°C/min) — leave 0 to skip",
           "calib_tau": "Calibration: cooling time constant τ (minutes) — leave 0 to skip",
           "calib_b": "Calibration: cooling rate b = 1/τ — leave 0 to skip"
+        },
+        "data_description": {
+          "valve_characteristic": "linear: flow proportional to valve position. quick_opening: ~80% of maximum flow at 10–15% opening, matching typical TRV behaviour."
         }
       },
       "model_r2c2_radiator": {
@@ -80,6 +84,7 @@
           "radiator_convective_fraction": "Radiator convective fraction (0–1)",
           "flow_rate_max_kg_s": "Maximum water flow rate (kg/s)",
           "pipe_delay_seconds": "Pipe dead-time (seconds)",
+          "valve_characteristic": "Valve flow characteristic",
           "c_air": "Air node thermal mass (J/°C)",
           "c_fabric": "Building fabric thermal mass (J/°C)",
           "r_fabric": "Air-to-fabric thermal resistance (°C/W)",
@@ -145,6 +150,7 @@
           "flow_rate_max_kg_s": "Maximum water flow rate (kg/s)",
           "heat_loss_coefficient_rad": "Room heat loss coefficient (W/°C)",
           "pipe_delay_seconds": "Pipe dead-time (seconds)",
+          "valve_characteristic": "Valve flow characteristic",
           "radiator_exponent": "Radiator emission exponent n",
           "radiator_convective_fraction": "Radiator convective fraction",
           "calib_a": "Calibration: heating rate a (°C/min) — leave 0 to skip",

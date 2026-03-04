@@ -393,11 +393,28 @@ Dead time (seconds) from a valve position change to when hot water actually arri
 
 ---
 
+### `valve_characteristic`
+
+The relationship between valve position and water flow rate.
+
+| Value | Description |
+|---|---|
+| `linear` | Flow proportional to position — default |
+| `quick_opening` | Piecewise-linear TRV crack-open curve: nearly sealed below 2%, rapid opening between 3–5%, saturating above ~14% at ~89% flow |
+
+**Default:** `linear`.
+
+**When to use `quick_opening`:** Select this when you want to simulate a real thermostatic radiator valve (TRV). Actual TRVs are quick-opening types: the valve seat is nearly sealed at small openings and then cracks open suddenly. This means a controller using small valve modulation steps near the closed end achieves much larger flow changes than a linear model would predict, and partial valve positions do not give proportional heat output. Use `linear` for simpler proportional control testing or when modelling a motorised modulating valve.
+
+---
+
 ## R2C2 + Radiator Parameters
 
 This model uses all parameters from the Wet Radiator and R2C2 sections above, with two exceptions:
 - `heat_loss_coefficient_rad` and `c_room_rad` are **not used** (replaced by the R2C2 fabric node).
 - `heater_power_watts_r2c2` is **not used** (the radiator is the heater).
+
+This includes `valve_characteristic` and `pipe_delay_seconds` from the Wet Radiator section.
 
 One additional parameter is added:
 

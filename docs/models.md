@@ -200,6 +200,21 @@ Q_loss = K_eff · (T_room − T_ext)
 K_eff = K_loss × weather_multiplier
 ```
 
+**Valve characteristic:** The valve position (0–1) is mapped to actual flow fraction before computing Q_in. Two curves are available:
+
+- `linear` — flow proportional to position (default).
+- `quick_opening` — piecewise-linear fit to typical TRV behaviour: nearly sealed below 2% opening, then rapid crack-open between 3–5%, saturating above ~14% at roughly 90% flow. This matches the physical behaviour of a thermostatic radiator valve where small positional movements near the seat produce disproportionately large flow changes.
+
+| Position | Linear flow | Quick-opening flow |
+|---|---|---|
+| 0% | 0% | 0% |
+| 1% | 1% | 1% |
+| 3% | 3% | 8.5% |
+| 5% | 5% | 65% |
+| 10% | 10% | 84.5% |
+| 14% | 14% | 89% |
+| 100% | 100% | 100% |
+
 **Pipe delay:** An optional FIFO queue buffers the valve command so the radiator only sees flow commanded `N` seconds ago. The queue is 1-second resolution, accumulated correctly across arbitrary update intervals.
 
 **Return temperature estimate (AMTD approximation):**
@@ -223,6 +238,7 @@ This avoids the singularity in the energy-balance method at low flow rates.
 | `heat_loss_coefficient_rad` | Room K-value — heat loss per °C above external (W/°C) | 0.001–2 000 | 50 |
 | `c_room_rad` | Room thermal mass — air plus all contents (J/°C) | 1 000–20 000 000 | 500 000 |
 | `pipe_delay_seconds` | Dead time for hot water to reach radiator (s) | 0–600 | 0 |
+| `valve_characteristic` | Flow curve: `linear` or `quick_opening` | — | `linear` |
 
 ### Sizing guidance
 
@@ -320,6 +336,7 @@ All parameters from the Wet Radiator model (except `heat_loss_coefficient_rad` a
 | Key | Description | Range | Default |
 |---|---|---|---|
 | `radiator_convective_fraction` | Fraction of Q_out directed to the air node (remainder goes to fabric) | 0.1–1.0 | 0.75 |
+| `valve_characteristic` | Flow curve: `linear` or `quick_opening` | — | `linear` |
 
 See the Wet Radiator and R2C2 parameter tables for the remaining parameters. Sizing guidance from those sections applies unchanged.
 

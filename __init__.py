@@ -51,6 +51,7 @@ from .const import (
     CONF_HEAT_LOSS_COEFF_RAD,
     CONF_C_ROOM_RAD,
     CONF_PIPE_DELAY,
+    CONF_VALVE_CHARACTERISTIC,
     # model types
     MODEL_SIMPLE,
     MODEL_R2C2,
@@ -81,6 +82,7 @@ from .const import (
     DEFAULT_HEAT_LOSS_COEFF_RAD,
     DEFAULT_C_ROOM_RAD,
     DEFAULT_PIPE_DELAY,
+    DEFAULT_VALVE_CHARACTERISTIC,
     # defaults — shared
     DEFAULT_INITIAL_TEMP,
     DEFAULT_EXTERNAL_TEMP_FIXED,
@@ -328,6 +330,7 @@ class HeatingSimulator:
                 heat_loss_coeff=float(cfg.get(CONF_HEAT_LOSS_COEFF_RAD, DEFAULT_HEAT_LOSS_COEFF_RAD)),
                 c_room=float(cfg.get(CONF_C_ROOM_RAD, DEFAULT_C_ROOM_RAD)),
                 pipe_delay=float(cfg.get(CONF_PIPE_DELAY, DEFAULT_PIPE_DELAY)),
+                valve_characteristic=cfg.get(CONF_VALVE_CHARACTERISTIC, DEFAULT_VALVE_CHARACTERISTIC),
                 initial_temp=initial_temp,
                 initial_external_temp=initial_ext,
             )
@@ -340,6 +343,7 @@ class HeatingSimulator:
                 radiator_exponent=float(cfg.get(CONF_RAD_EXPONENT, DEFAULT_RAD_EXPONENT)),
                 flow_rate_max=float(cfg.get(CONF_FLOW_RATE_MAX, DEFAULT_FLOW_RATE_MAX)),
                 pipe_delay=float(cfg.get(CONF_PIPE_DELAY, DEFAULT_PIPE_DELAY)),
+                valve_characteristic=cfg.get(CONF_VALVE_CHARACTERISTIC, DEFAULT_VALVE_CHARACTERISTIC),
                 # Room
                 c_air=float(cfg.get(CONF_C_AIR, DEFAULT_C_AIR)),
                 c_fabric=float(cfg.get(CONF_C_FABRIC, DEFAULT_C_FABRIC)),
