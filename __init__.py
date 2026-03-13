@@ -545,6 +545,10 @@ class HeatingSimulator:
         if hasattr(m, "net_heat_rate"):
             m.net_heat_rate = 0.0
 
+        # Ensure the switch entity does not stay logically "on" after reset.
+        # A stale on-state can block thermostat re-commands in PWM setups.
+        self._pwm_on = False
+
         _LOGGER.info(
             "Model reset: preset=%s t_room=%.1f t_fabric=%.1f t_rad=%.1f",
             preset or "manual",
@@ -705,7 +709,13 @@ class HeatingSimulator:
     # ------------------------------------------------------------------
 
     def set_linear_power(self, percent: float) -> None:
-        self.model.set_power_fraction(percent / 100.0)
+        fraction = max(0.0, min(1.0, percent / 100.0))
+        self.model.set_power_fraction(fraction)
+        # Keep switch state aligned with the actual commanded power.
+        # Without this, the switch can remain "on" while the model power is 0
+        # (e.g. after reset/manual slider change), and a thermostat may never
+        # send another turn_on because it believes the switch is already on.
+        self._pwm_on = fraction > 0.0
         self._notify_listeners()
 
     def set_pwm_switch(self, on: bool) -> None:
@@ -715,7 +725,9 @@ class HeatingSimulator:
 
     @property
     def pwm_on(self) -> bool:
-        return self._pwm_on
+        # Derive from the actual model setpoint as a safety net against any
+        # transient desynchronisation between command tracking and model state.
+        return self._pwm_on or self.model.power_setpoint > 0.0
 
     @property
     def power_percent(self) -> float:
