@@ -107,6 +107,7 @@ class _Base(SensorEntity):
         self._unsub = None
 
     async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
         self._unsub = self._sim.register_listener(self._on_update)
 
     async def async_will_remove_from_hass(self) -> None:
