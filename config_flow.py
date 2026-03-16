@@ -549,8 +549,10 @@ def _sensor_options_schema(cfg: dict) -> vol.Schema:
             vol.Coerce(float), vol.Range(min=0, max=10)
         ),
     })
-    # Wrap with cross-field validator
-    return vol.All(raw_schema, _validate_sensor_options)
+    # Cross-field validation (update_rate vs Zigbee, min < max) is performed
+    # in async_step_sensor rather than here, because voluptuous_serialize
+    # cannot serialise a vol.All(schema, function) wrapper for the HA frontend.
+    return raw_schema
 
 
 def _disturbances_options_schema(cfg: dict) -> vol.Schema:
