@@ -22,6 +22,8 @@ from .const import (
     CONF_SENSOR_LAG_TAU, CONF_SENSOR_UPDATE_RATE,
     DEFAULT_SENSOR_NOISE_STD_DEV, DEFAULT_SENSOR_BIAS, DEFAULT_SENSOR_QUANTISATION,
     DEFAULT_SENSOR_LAG_TAU, DEFAULT_SENSOR_UPDATE_RATE,
+    CONF_SENSOR_MIN_INTERVAL, CONF_SENSOR_MAX_INTERVAL, CONF_SENSOR_DELTA,
+    DEFAULT_SENSOR_MIN_INTERVAL, DEFAULT_SENSOR_MAX_INTERVAL, DEFAULT_SENSOR_DELTA,
 )
 from . import HeatingSimulator
 
@@ -127,15 +129,20 @@ class TemperatureSensor(_Base, RestoreSensor):
     Extends RestoreSensor so the last known value survives HA restarts and
     can be injected back into the thermal model before the first tick fires.
 
-    Applies the F-02 / F-04 / F-07 sensor imperfection pipeline in order:
+    Applies the sensor imperfection pipeline in order:
       1. Sensor lag    — first-order low-pass  (F-04)
       2. Bias          — fixed additive offset  (F-07)
       3. Noise         — Gaussian sample        (F-02)
       4. Quantisation  — round to step size     (F-02)
       5. Rate-limit    — suppress if interval not elapsed (F-04)
+      6. Zigbee-style  — min interval / max interval (heartbeat) / delta (F-NEW)
 
     All pipeline stages are disabled when their parameter is 0 (the default),
     making the sensor behave identically to the pre-feature version.
+
+    Stages 5 and 6 are mutually exclusive: sensor_update_rate and the Zigbee
+    parameters cannot both be non-zero simultaneously (enforced by config flow
+    validation).
     """
     _attr_name = "Room Temperature"
     _attr_device_class = SensorDeviceClass.TEMPERATURE
@@ -150,10 +157,13 @@ class TemperatureSensor(_Base, RestoreSensor):
         # --- Sensor imperfection state ---
         # Lag filter: initialised to None; set on first tick from true model temp
         self._lagged_temp: float | None = None
-        # Rate-limiter: last time we emitted a new value (monotonic clock)
+        # Stage 5 rate-limiter: last time we emitted a new value (monotonic clock)
         self._last_report_time: float = 0.0
-        # Rate-limiter: the last value we actually reported (so we can repeat it)
+        # Stage 5 rate-limiter: the last value we actually reported (so we can repeat it)
         self._last_reported_value: float | None = None
+        # Stage 6 Zigbee reporting state
+        self._zigbee_last_report_time: float = 0.0
+        self._zigbee_last_reported_value: float | None = None
 
     def _sensor_cfg(self) -> dict:
         """Return merged data+options config for the parent entry."""
@@ -170,6 +180,9 @@ class TemperatureSensor(_Base, RestoreSensor):
                 # Seed the lag filter so it doesn't start from zero
                 self._lagged_temp = t_room
                 self._last_reported_value = t_room
+                # Seed Zigbee state — prevents a spurious immediate heartbeat after restart
+                self._zigbee_last_reported_value = t_room
+                self._zigbee_last_report_time = time.monotonic()
                 _LOGGER.debug(
                     "Restored room temperature %.2f°C from previous state", t_room
                 )
@@ -238,6 +251,59 @@ class TemperatureSensor(_Base, RestoreSensor):
         else:
             self._last_reported_value = value
 
+        # ------------------------------------------------------------------
+        # Stage 6 — Zigbee-style conditional reporting (F-NEW)
+        #
+        # Three cooperating rules evaluated against the post-quantisation value:
+        #   min_interval  — shortest time between any two reports
+        #   max_interval  — heartbeat: always report once this elapses
+        #   delta         — minimum change vs last reported value to trigger a report
+        #
+        # Logic table:
+        #   heartbeat_due=True               → always emit (keepalive)
+        #   heartbeat_due=False, min elapsed, delta crossed → emit (change report)
+        #   anything else                    → suppress, return last reported value
+        #
+        # Mutually exclusive with Stage 5 (update_rate) — enforced by config
+        # flow validation; both being non-zero simultaneously is not permitted.
+        # ------------------------------------------------------------------
+        min_interval = float(cfg.get(CONF_SENSOR_MIN_INTERVAL, DEFAULT_SENSOR_MIN_INTERVAL))
+        max_interval = float(cfg.get(CONF_SENSOR_MAX_INTERVAL, DEFAULT_SENSOR_MAX_INTERVAL))
+        delta        = float(cfg.get(CONF_SENSOR_DELTA,        DEFAULT_SENSOR_DELTA))
+
+        if min_interval > 0.0 or max_interval > 0.0 or delta > 0.0:
+            now = time.monotonic()
+
+            # First tick after cold start or HA restart: always report and seed state
+            if self._zigbee_last_reported_value is None:
+                self._zigbee_last_report_time = now
+                self._zigbee_last_reported_value = value
+                # fall through — value reported normally
+
+            else:
+                elapsed = now - self._zigbee_last_report_time
+                change  = abs(value - self._zigbee_last_reported_value)
+
+                heartbeat_due = (max_interval > 0.0) and (elapsed >= max_interval)
+                min_elapsed   = (min_interval <= 0.0) or (elapsed >= min_interval)
+                delta_crossed = (delta <= 0.0) or (change >= delta)
+
+                if heartbeat_due:
+                    # Max interval elapsed — always report regardless of delta / min
+                    self._zigbee_last_report_time = now
+                    self._zigbee_last_reported_value = value
+                    # fall through
+
+                elif min_elapsed and delta_crossed:
+                    # Both min interval and delta conditions satisfied — emit
+                    self._zigbee_last_report_time = now
+                    self._zigbee_last_reported_value = value
+                    # fall through
+
+                else:
+                    # Suppress — return the last successfully reported value
+                    return round(self._zigbee_last_reported_value, 3)
+
         return round(value, 3)
 
     @property
@@ -245,21 +311,30 @@ class TemperatureSensor(_Base, RestoreSensor):
         cfg = self._sensor_cfg()
         attrs = {"model_type": self._sim.model_type}
         # Expose active imperfection parameters for transparency / debugging
-        noise_std   = float(cfg.get(CONF_SENSOR_NOISE_STD_DEV, DEFAULT_SENSOR_NOISE_STD_DEV))
-        bias        = float(cfg.get(CONF_SENSOR_BIAS,           DEFAULT_SENSOR_BIAS))
-        quantise    = float(cfg.get(CONF_SENSOR_QUANTISATION,   DEFAULT_SENSOR_QUANTISATION))
-        lag_tau     = float(cfg.get(CONF_SENSOR_LAG_TAU,        DEFAULT_SENSOR_LAG_TAU))
-        update_rate = float(cfg.get(CONF_SENSOR_UPDATE_RATE,    DEFAULT_SENSOR_UPDATE_RATE))
-        if any([noise_std, bias, quantise, lag_tau, update_rate]):
+        noise_std    = float(cfg.get(CONF_SENSOR_NOISE_STD_DEV,  DEFAULT_SENSOR_NOISE_STD_DEV))
+        bias         = float(cfg.get(CONF_SENSOR_BIAS,            DEFAULT_SENSOR_BIAS))
+        quantise     = float(cfg.get(CONF_SENSOR_QUANTISATION,    DEFAULT_SENSOR_QUANTISATION))
+        lag_tau      = float(cfg.get(CONF_SENSOR_LAG_TAU,         DEFAULT_SENSOR_LAG_TAU))
+        update_rate  = float(cfg.get(CONF_SENSOR_UPDATE_RATE,     DEFAULT_SENSOR_UPDATE_RATE))
+        min_interval = float(cfg.get(CONF_SENSOR_MIN_INTERVAL,    DEFAULT_SENSOR_MIN_INTERVAL))
+        max_interval = float(cfg.get(CONF_SENSOR_MAX_INTERVAL,    DEFAULT_SENSOR_MAX_INTERVAL))
+        delta        = float(cfg.get(CONF_SENSOR_DELTA,           DEFAULT_SENSOR_DELTA))
+
+        if any([noise_std, bias, quantise, lag_tau, update_rate,
+                min_interval, max_interval, delta]):
             attrs["sensor_noise_std_dev"]  = noise_std
             attrs["sensor_bias"]           = bias
             attrs["sensor_quantisation"]   = quantise
             attrs["sensor_lag_tau_s"]      = lag_tau
             attrs["sensor_update_rate_s"]  = update_rate
+            attrs["sensor_min_interval_s"] = min_interval
+            attrs["sensor_max_interval_s"] = max_interval
+            attrs["sensor_delta"]          = delta
             if self._lagged_temp is not None and lag_tau > 0.0:
                 attrs["sensor_lagged_temp"] = round(self._lagged_temp, 3)
+            if self._zigbee_last_reported_value is not None and any([min_interval, max_interval, delta]):
+                attrs["sensor_zigbee_last_value"] = round(self._zigbee_last_reported_value, 3)
         return attrs
-
 
 
 class TrueTemperatureSensor(_Base):
@@ -461,9 +536,9 @@ class FabricTemperatureSensor(_Base, RestoreSensor):
 
     @property
     def extra_state_attributes(self):
+        m = self._sim.model
         return {
-            "air_fabric_delta": round(self._sim.model.t_air - self._sim.model.t_fabric, 3),
-            "fabric_to_air_flux_w": round(self._sim.model.fabric_heat_flux, 1),
+            "delta_air_fabric": round(m.t_air - m.t_fabric, 3),
         }
 
 
@@ -483,15 +558,6 @@ class SolarGainSensor(_Base):
     def native_value(self):
         return round(self._sim.model.solar_gain_watts, 1)
 
-    @property
-    def extra_state_attributes(self):
-        m = self._sim.model
-        return {
-            "irradiance_W_m2": round(m.solar_irradiance, 1),
-            "window_area_m2": m.window_area,
-            "transmittance": m.window_transmittance,
-        }
-
 
 class TotalHeatLossSensor(_Base):
     _attr_name = "Total Heat Loss"
@@ -509,24 +575,16 @@ class TotalHeatLossSensor(_Base):
     def native_value(self):
         return round(self._sim.model.total_heat_loss_watts, 1)
 
-    @property
-    def extra_state_attributes(self):
-        m = self._sim.model
-        return {
-            "infiltration_loss_w": round((m.t_air - m.external_temperature) / m.r_inf, 1),
-            "fabric_loss_w": round((m.t_fabric - m.external_temperature) / m.r_ext, 1),
-            "effective_u_value_W_per_C": round(m.effective_u_value, 2),
-        }
-
 
 # ---------------------------------------------------------------------------
-# Wet radiator sensors
+# Wet radiator model sensors
 # ---------------------------------------------------------------------------
 
 class RadiatorTemperatureSensor(_Base, RestoreSensor):
     """
-    Radiator water temperature. Restoring this on boot avoids the simulation
-    starting from a cold radiator when the real system was already warm.
+    Radiator water temperature. Uses RestoreSensor so the radiator thermal
+    state is preserved across HA restarts.  Restoring this on boot avoids the
+    simulation starting from a cold radiator when the real system was already warm.
     """
     _attr_name = "Radiator Temperature"
     _attr_device_class = SensorDeviceClass.TEMPERATURE
@@ -599,22 +657,14 @@ class RadiatorQOutSensor(_Base):
     def native_value(self):
         return round(self._sim.model.q_out_watts, 1)
 
-    @property
-    def extra_state_attributes(self):
-        m = self._sim.model
-        return {
-            "nominal_output_w_dt50": round(m.nominal_output_at_dt50, 1),
-            "output_fraction": round(m.current_output_fraction, 3),
-        }
-
 
 class ReturnTemperatureSensor(_Base):
-    _attr_name = "Radiator Return Temperature"
+    _attr_name = "Return Temperature"
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-    _attr_icon = "mdi:pipe"
-    _attr_suggested_display_precision = 1
+    _attr_icon = "mdi:thermometer-water"
+    _attr_suggested_display_precision = 2
 
     def __init__(self, sim, entry):
         super().__init__(sim, entry)
@@ -622,12 +672,4 @@ class ReturnTemperatureSensor(_Base):
 
     @property
     def native_value(self):
-        return round(self._sim.model.return_temperature, 2)
-
-    @property
-    def extra_state_attributes(self):
-        m = self._sim.model
-        return {
-            "flow_temp": m.flow_temperature,
-            "flow_return_delta": round(m.flow_temperature - m.return_temperature, 2),
-        }
+        return round(self._sim.model.t_return, 2)

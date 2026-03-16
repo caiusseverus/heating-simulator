@@ -60,16 +60,16 @@
           "k_radiator": "Radiator emission coefficient (W/°C^n)",
           "radiator_exponent": "Radiator emission exponent n (1.0–2.0)",
           "flow_rate_max_kg_s": "Maximum water flow rate (kg/s)",
-          "heat_loss_coefficient_rad": "Room heat loss coefficient (W/°C)",
-          "c_room_rad": "Room thermal mass (J/°C)",
-          "pipe_delay_seconds": "Pipe dead-time — delay before hot water reaches radiator (seconds)",
+          "pipe_delay_seconds": "Pipe dead-time (seconds)",
           "valve_characteristic": "Valve flow characteristic",
+          "heat_loss_coefficient_rad": "Heat loss coefficient (W/°C)",
+          "c_room_rad": "Room thermal mass (J/°C)",
           "calib_a": "Calibration: heating rate a (°C/min) — leave 0 to skip",
           "calib_tau": "Calibration: cooling time constant τ (minutes) — leave 0 to skip",
           "calib_b": "Calibration: cooling rate b = 1/τ — leave 0 to skip"
         },
         "data_description": {
-          "valve_characteristic": "linear: flow proportional to valve position. quick_opening: ~80% of maximum flow at 10–15% opening, matching typical TRV behaviour."
+          "valve_characteristic": "linear: flow proportional to valve opening. quick_opening: ~80% of maximum flow at 10–15% opening, matching typical TRV behaviour."
         }
       },
       "model_r2c2_radiator": {
@@ -128,66 +128,47 @@
       },
       "thermal_model": {
         "title": "Thermal Model Parameters",
-        "description": "Physical parameters for the current model type. To change the model type, remove and re-add the integration.",
-        "data": {
-          "heater_power_watts": "Heater power (W)",
-          "heat_loss_coefficient": "Heat loss coefficient (W/°C)",
-          "thermal_mass": "Thermal mass (J/°C)",
-          "thermal_inertia": "Thermal inertia time constant (seconds)",
-          "heater_power_watts_r2c2": "Heater power (W)",
-          "c_air": "Air node thermal mass (J/°C)",
-          "c_fabric": "Building fabric thermal mass (J/°C)",
-          "r_fabric": "Air-to-fabric thermal resistance (°C/W)",
-          "r_ext": "Fabric-to-outside thermal resistance (°C/W)",
-          "r_infiltration": "Infiltration / ventilation resistance (°C/W)",
-          "window_area_m2": "Window area (m²)",
-          "solar_irradiance_fixed": "Fixed solar irradiance (W/m²)",
-          "flow_temperature": "Boiler flow temperature (°C)",
-          "flow_temperature_entity": "Flow temperature entity (optional)",
-          "c_radiator": "Radiator thermal mass — water + metal (J/°C)",
-          "c_room_rad": "Room thermal mass (J/°C)",
-          "k_radiator": "Radiator emission coefficient (W/°C^n)",
-          "flow_rate_max_kg_s": "Maximum water flow rate (kg/s)",
-          "heat_loss_coefficient_rad": "Room heat loss coefficient (W/°C)",
-          "pipe_delay_seconds": "Pipe dead-time (seconds)",
-          "valve_characteristic": "Valve flow characteristic",
-          "radiator_exponent": "Radiator emission exponent n",
-          "radiator_convective_fraction": "Radiator convective fraction",
-          "calib_a": "Calibration: heating rate a (°C/min) — leave 0 to skip",
-          "calib_tau": "Calibration: cooling time constant τ (minutes) — leave 0 to skip",
-          "calib_b": "Calibration: cooling rate b = 1/τ — leave 0 to skip"
-        }
+        "description": "Physical parameters for the current model type. Calibration fields are optional — leave at 0 to keep existing values."
       },
       "disturbances": {
         "title": "Disturbances",
-        "description": "Simulated occupancy, weather, and external temperature profile effects. Set values to 0 / disabled to deactivate each disturbance.",
+        "description": "Inject realistic time-varying inputs. Set values to 0 / disabled to deactivate each disturbance.",
         "data": {
           "ext_temp_profile_enabled": "Enable daily external temperature profile",
-          "ext_temp_base": "Daily base temperature (°C)",
-          "ext_temp_amplitude": "Daily temperature swing amplitude (°C)",
-          "ext_temp_min_hour": "Hour of daily temperature minimum (0–24)",
-          "ext_temp_max_hour": "Hour of daily temperature maximum (0–24)",
+          "ext_temp_profile_base": "Daily base temperature (°C)",
+          "ext_temp_profile_amplitude": "Daily temperature swing amplitude (°C)",
+          "ext_temp_profile_min_hour": "Hour of daily temperature minimum (0–24)",
+          "ext_temp_profile_max_hour": "Hour of daily temperature maximum (0–24)",
           "occupancy_enabled": "Enable occupancy simulation",
           "occupancy_max_occupants": "Maximum number of occupants",
-          "occupancy_cooking_power": "Cooking heat gain (W)",
-          "occupancy_cooking_duration_seconds": "Cooking event duration (seconds)",
+          "occupancy_cooking_power_w": "Cooking heat gain (W)",
+          "occupancy_cooking_duration_s": "Cooking event duration (seconds)",
           "occupancy_cooking_events_per_day": "Cooking events per day",
           "occupancy_seed": "Random seed (0 for different each run)",
-          "wind_speed_m_s": "Wind speed (m/s)",
-          "wind_coefficient": "Wind heat loss coefficient (W·s/m per °C)",
-          "rain_intensity": "Rain intensity (0–1)",
-          "rain_moisture_factor": "Rain moisture heat loss factor (0–0.5)"
+          "weather_wind_speed_m_s": "Wind speed (m/s)",
+          "weather_wind_coefficient": "Wind heat loss coefficient (W·s/m per °C)",
+          "weather_rain_intensity": "Rain intensity (0–1)",
+          "weather_rain_moisture_factor": "Rain moisture heat loss factor (0–0.5)"
         }
       },
       "sensor": {
         "title": "Sensor Degradation",
-        "description": "Simulate imperfections in the temperature sensor output. Set all values to 0 to disable and report the true simulated temperature.",
+        "description": "Simulate imperfections in the temperature sensor output. Set all values to 0 to disable and report the true simulated temperature. Use min/max interval and delta to simulate Zigbee-style conditional reporting (mutually exclusive with the fixed update interval).",
         "data": {
           "sensor_noise_std_dev": "Noise standard deviation (°C) — Gaussian white noise",
           "sensor_bias": "Constant bias offset (°C)",
-          "sensor_quantisation_step": "Quantisation step size (°C) — 0 to disable",
+          "sensor_quantisation": "Quantisation step size (°C) — 0 to disable",
           "sensor_lag_tau": "First-order lag time constant (seconds) — 0 to disable",
-          "sensor_update_rate_seconds": "Sensor update interval (seconds) — 0 for every tick"
+          "sensor_update_rate_s": "Fixed update interval (seconds) — 0 for every tick; cannot be used with Zigbee settings below",
+          "sensor_min_interval_s": "Zigbee minimum report interval (seconds) — shortest time between any two reports; 0 to disable",
+          "sensor_max_interval_s": "Zigbee maximum report interval / heartbeat (seconds) — sensor always reports at least this often; 0 to disable",
+          "sensor_delta": "Zigbee report delta threshold (°C) — minimum post-quantisation change to trigger a report; 0 to disable"
+        },
+        "data_description": {
+          "sensor_update_rate_s": "Simulates a fixed-interval sensor (e.g. battery sensor every 5 min). Set to 0 when using Zigbee min/max/delta below.",
+          "sensor_min_interval_s": "Typical Zigbee TRV: 30 s.",
+          "sensor_max_interval_s": "Typical Zigbee TRV: 600 s. Must be greater than the minimum interval when both are non-zero.",
+          "sensor_delta": "Evaluated against the post-quantisation value. Typical Zigbee TRV: 0.1 °C."
         }
       }
     }

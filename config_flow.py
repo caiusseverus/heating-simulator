@@ -8,7 +8,7 @@ Options flow (menu-driven, all sections re-editable):
   Menu → general        — control mode, temperatures, update interval
        → thermal_model  — model-specific physics (same schemas as setup step 2)
        → disturbances   — occupancy, external temperature profile, wind, rain
-       → sensor         — sensor noise/bias/lag/quantisation
+       → sensor         — sensor noise/bias/lag/quantisation/Zigbee reporting
 """
 
 from __future__ import annotations
@@ -73,6 +73,13 @@ from .const import (
     DEFAULT_SENSOR_QUANTISATION,
     DEFAULT_SENSOR_LAG_TAU,
     DEFAULT_SENSOR_UPDATE_RATE,
+    # Zigbee-style reporting
+    CONF_SENSOR_MIN_INTERVAL,
+    CONF_SENSOR_MAX_INTERVAL,
+    CONF_SENSOR_DELTA,
+    DEFAULT_SENSOR_MIN_INTERVAL,
+    DEFAULT_SENSOR_MAX_INTERVAL,
+    DEFAULT_SENSOR_DELTA,
     # model types / control modes
     MODEL_SIMPLE,
     MODEL_R2C2,
@@ -133,10 +140,10 @@ def _g(cfg: dict, key: str, default):
 
 
 # ---------------------------------------------------------------------------
-# Setup step 1 — identity and model selection
+# Static setup schemas (used only during initial config flow, no pre-population)
 # ---------------------------------------------------------------------------
 
-STEP_SETUP_SCHEMA = vol.Schema({
+STEP_USER_SCHEMA = vol.Schema({
     vol.Required("name", default="Heating Simulator"): str,
     vol.Required(CONF_MODEL_TYPE, default=MODEL_SIMPLE): vol.In(
         [MODEL_SIMPLE, MODEL_R2C2, MODEL_RADIATOR, MODEL_R2C2_RADIATOR]
@@ -144,31 +151,30 @@ STEP_SETUP_SCHEMA = vol.Schema({
     vol.Required(CONF_CONTROL_MODE, default=CONTROL_MODE_LINEAR): vol.In(
         [CONTROL_MODE_LINEAR, CONTROL_MODE_PWM]
     ),
-    vol.Required(CONF_INITIAL_TEMP, default=DEFAULT_INITIAL_TEMP): vol.Coerce(float),
+    vol.Required(CONF_INITIAL_TEMP, default=DEFAULT_INITIAL_TEMP): vol.All(
+        vol.Coerce(float), vol.Range(min=-20, max=40)
+    ),
     vol.Optional(CONF_EXTERNAL_TEMP, default=""): str,
-    vol.Required(CONF_EXTERNAL_TEMP_FIXED, default=DEFAULT_EXTERNAL_TEMP_FIXED): vol.Coerce(float),
+    vol.Required(CONF_EXTERNAL_TEMP_FIXED, default=DEFAULT_EXTERNAL_TEMP_FIXED): vol.All(
+        vol.Coerce(float), vol.Range(min=-30, max=50)
+    ),
     vol.Required(CONF_UPDATE_INTERVAL, default=DEFAULT_UPDATE_INTERVAL): vol.All(
         vol.Coerce(int), vol.Range(min=1, max=300)
     ),
 })
-
-
-# ---------------------------------------------------------------------------
-# Model parameter schemas — initial setup (no current-value defaults needed)
-# ---------------------------------------------------------------------------
 
 STEP_SIMPLE_SCHEMA = vol.Schema({
     vol.Required(CONF_HEATER_POWER, default=DEFAULT_HEATER_POWER): vol.All(
         vol.Coerce(float), vol.Range(min=100, max=50000)
     ),
     vol.Required(CONF_HEAT_LOSS_COEFF, default=DEFAULT_HEAT_LOSS_COEFF): vol.All(
-        vol.Coerce(float), vol.Range(min=0.001, max=2000)
+        vol.Coerce(float), vol.Range(min=1, max=2000)
     ),
     vol.Required(CONF_THERMAL_MASS, default=DEFAULT_THERMAL_MASS): vol.All(
-        vol.Coerce(float), vol.Range(min=100, max=20_000_000)
+        vol.Coerce(float), vol.Range(min=10000, max=50_000_000)
     ),
     vol.Required(CONF_THERMAL_INERTIA, default=DEFAULT_THERMAL_INERTIA): vol.All(
-        vol.Coerce(float), vol.Range(min=0, max=7200)
+        vol.Coerce(float), vol.Range(min=0, max=3600)
     ),
     vol.Optional(CONF_CALIB_A,   default=0.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=10)),
     vol.Optional(CONF_CALIB_TAU, default=0.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=100000)),
@@ -180,7 +186,7 @@ STEP_R2C2_SCHEMA = vol.Schema({
         vol.Coerce(float), vol.Range(min=100, max=50000)
     ),
     vol.Required(CONF_C_AIR, default=DEFAULT_C_AIR): vol.All(
-        vol.Coerce(float), vol.Range(min=1000, max=20_000_000)
+        vol.Coerce(float), vol.Range(min=1000, max=2_000_000)
     ),
     vol.Required(CONF_C_FABRIC, default=DEFAULT_C_FABRIC): vol.All(
         vol.Coerce(float), vol.Range(min=10000, max=50_000_000)
@@ -263,6 +269,12 @@ STEP_R2C2_RADIATOR_SCHEMA = vol.Schema({
     vol.Required(CONF_FLOW_RATE_MAX, default=DEFAULT_FLOW_RATE_MAX): vol.All(
         vol.Coerce(float), vol.Range(min=0.001, max=1.0)
     ),
+    vol.Required(CONF_HEAT_LOSS_COEFF_RAD, default=DEFAULT_HEAT_LOSS_COEFF_RAD): vol.All(
+        vol.Coerce(float), vol.Range(min=0.001, max=2000)
+    ),
+    vol.Required(CONF_C_ROOM_RAD, default=DEFAULT_C_ROOM_RAD): vol.All(
+        vol.Coerce(float), vol.Range(min=1000, max=20_000_000)
+    ),
     vol.Required(CONF_PIPE_DELAY, default=DEFAULT_PIPE_DELAY): vol.All(
         vol.Coerce(float), vol.Range(min=0, max=600)
     ),
@@ -313,8 +325,10 @@ def _general_options_schema(cfg: dict) -> vol.Schema:
             [CONTROL_MODE_LINEAR, CONTROL_MODE_PWM]
         ),
         vol.Optional(CONF_EXTERNAL_TEMP, default=_g(cfg, CONF_EXTERNAL_TEMP, "")): str,
-        vol.Required(CONF_EXTERNAL_TEMP_FIXED, default=_g(cfg, CONF_EXTERNAL_TEMP_FIXED, DEFAULT_EXTERNAL_TEMP_FIXED)): vol.Coerce(float),
-        vol.Required(CONF_UPDATE_INTERVAL, default=_g(cfg, CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)): vol.All(
+        vol.Required(CONF_EXTERNAL_TEMP_FIXED, default=float(_g(cfg, CONF_EXTERNAL_TEMP_FIXED, DEFAULT_EXTERNAL_TEMP_FIXED))): vol.All(
+            vol.Coerce(float), vol.Range(min=-30, max=50)
+        ),
+        vol.Required(CONF_UPDATE_INTERVAL, default=int(_g(cfg, CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL))): vol.All(
             vol.Coerce(int), vol.Range(min=1, max=300)
         ),
     })
@@ -322,17 +336,17 @@ def _general_options_schema(cfg: dict) -> vol.Schema:
 
 def _simple_model_schema(cfg: dict) -> vol.Schema:
     return vol.Schema({
-        vol.Required(CONF_HEATER_POWER, default=_g(cfg, CONF_HEATER_POWER, DEFAULT_HEATER_POWER)): vol.All(
+        vol.Required(CONF_HEATER_POWER, default=float(_g(cfg, CONF_HEATER_POWER, DEFAULT_HEATER_POWER))): vol.All(
             vol.Coerce(float), vol.Range(min=100, max=50000)
         ),
-        vol.Required(CONF_HEAT_LOSS_COEFF, default=_g(cfg, CONF_HEAT_LOSS_COEFF, DEFAULT_HEAT_LOSS_COEFF)): vol.All(
-            vol.Coerce(float), vol.Range(min=0.001, max=2000)
+        vol.Required(CONF_HEAT_LOSS_COEFF, default=float(_g(cfg, CONF_HEAT_LOSS_COEFF, DEFAULT_HEAT_LOSS_COEFF))): vol.All(
+            vol.Coerce(float), vol.Range(min=1, max=2000)
         ),
-        vol.Required(CONF_THERMAL_MASS, default=_g(cfg, CONF_THERMAL_MASS, DEFAULT_THERMAL_MASS)): vol.All(
-            vol.Coerce(float), vol.Range(min=100, max=20_000_000)
+        vol.Required(CONF_THERMAL_MASS, default=float(_g(cfg, CONF_THERMAL_MASS, DEFAULT_THERMAL_MASS))): vol.All(
+            vol.Coerce(float), vol.Range(min=10000, max=50_000_000)
         ),
-        vol.Required(CONF_THERMAL_INERTIA, default=_g(cfg, CONF_THERMAL_INERTIA, DEFAULT_THERMAL_INERTIA)): vol.All(
-            vol.Coerce(float), vol.Range(min=0, max=7200)
+        vol.Required(CONF_THERMAL_INERTIA, default=float(_g(cfg, CONF_THERMAL_INERTIA, DEFAULT_THERMAL_INERTIA))): vol.All(
+            vol.Coerce(float), vol.Range(min=0, max=3600)
         ),
         vol.Optional(CONF_CALIB_A,   default=0.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=10)),
         vol.Optional(CONF_CALIB_TAU, default=0.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=100000)),
@@ -342,25 +356,32 @@ def _simple_model_schema(cfg: dict) -> vol.Schema:
 
 def _r2c2_model_schema(cfg: dict) -> vol.Schema:
     return vol.Schema({
-        vol.Required(CONF_HEATER_POWER_R2C2, default=_g(cfg, CONF_HEATER_POWER_R2C2, DEFAULT_HEATER_POWER_R2C2)): vol.All(
+        vol.Required(CONF_HEATER_POWER_R2C2, default=float(_g(cfg, CONF_HEATER_POWER_R2C2, DEFAULT_HEATER_POWER_R2C2))): vol.All(
             vol.Coerce(float), vol.Range(min=100, max=50000)
         ),
-        vol.Required(CONF_C_AIR, default=_g(cfg, CONF_C_AIR, DEFAULT_C_AIR)): vol.All(
-            vol.Coerce(float), vol.Range(min=1000, max=20_000_000)
+        vol.Required(CONF_C_AIR, default=float(_g(cfg, CONF_C_AIR, DEFAULT_C_AIR))): vol.All(
+            vol.Coerce(float), vol.Range(min=1000, max=2_000_000)
         ),
-        vol.Required(CONF_C_FABRIC, default=_g(cfg, CONF_C_FABRIC, DEFAULT_C_FABRIC)): vol.All(
+        vol.Required(CONF_C_FABRIC, default=float(_g(cfg, CONF_C_FABRIC, DEFAULT_C_FABRIC))): vol.All(
             vol.Coerce(float), vol.Range(min=10000, max=50_000_000)
         ),
-        vol.Required(CONF_R_EXT, default=_g(cfg, CONF_R_EXT, DEFAULT_R_EXT)): vol.All(
+        vol.Required(CONF_R_FABRIC, default=float(_g(cfg, CONF_R_FABRIC, DEFAULT_R_FABRIC))): vol.All(
+            vol.Coerce(float), vol.Range(min=0.0001, max=1.0)
+        ),
+        vol.Required(CONF_R_EXT, default=float(_g(cfg, CONF_R_EXT, DEFAULT_R_EXT))): vol.All(
             vol.Coerce(float), vol.Range(min=0.0001, max=50.0)
         ),
-        vol.Required(CONF_R_INF, default=_g(cfg, CONF_R_INF, DEFAULT_R_INF)): vol.All(
+        vol.Required(CONF_R_INF, default=float(_g(cfg, CONF_R_INF, DEFAULT_R_INF))): vol.All(
             vol.Coerce(float), vol.Range(min=0.001, max=10.0)
         ),
-        vol.Required(CONF_WINDOW_AREA, default=_g(cfg, CONF_WINDOW_AREA, DEFAULT_WINDOW_AREA)): vol.All(
+        vol.Required(CONF_WINDOW_AREA, default=float(_g(cfg, CONF_WINDOW_AREA, DEFAULT_WINDOW_AREA))): vol.All(
             vol.Coerce(float), vol.Range(min=0, max=100)
         ),
-        vol.Required(CONF_SOLAR_FIXED, default=_g(cfg, CONF_SOLAR_FIXED, DEFAULT_SOLAR_FIXED)): vol.All(
+        vol.Required(CONF_WINDOW_TRANSMITTANCE, default=float(_g(cfg, CONF_WINDOW_TRANSMITTANCE, DEFAULT_WINDOW_TRANSMITTANCE))): vol.All(
+            vol.Coerce(float), vol.Range(min=0, max=1)
+        ),
+        vol.Optional(CONF_SOLAR_ENTITY, default=_g(cfg, CONF_SOLAR_ENTITY, "")): str,
+        vol.Required(CONF_SOLAR_FIXED, default=float(_g(cfg, CONF_SOLAR_FIXED, DEFAULT_SOLAR_FIXED))): vol.All(
             vol.Coerce(float), vol.Range(min=0, max=1500)
         ),
         vol.Optional(CONF_CALIB_TAU, default=0.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=100000)),
@@ -370,26 +391,29 @@ def _r2c2_model_schema(cfg: dict) -> vol.Schema:
 
 def _radiator_model_schema(cfg: dict) -> vol.Schema:
     return vol.Schema({
-        vol.Required(CONF_FLOW_TEMP, default=_g(cfg, CONF_FLOW_TEMP, DEFAULT_FLOW_TEMP)): vol.All(
+        vol.Required(CONF_FLOW_TEMP, default=float(_g(cfg, CONF_FLOW_TEMP, DEFAULT_FLOW_TEMP))): vol.All(
             vol.Coerce(float), vol.Range(min=20, max=90)
         ),
         vol.Optional(CONF_FLOW_TEMP_ENTITY, default=_g(cfg, CONF_FLOW_TEMP_ENTITY, "")): str,
-        vol.Required(CONF_C_RAD, default=_g(cfg, CONF_C_RAD, DEFAULT_C_RAD)): vol.All(
+        vol.Required(CONF_C_RAD, default=float(_g(cfg, CONF_C_RAD, DEFAULT_C_RAD))): vol.All(
             vol.Coerce(float), vol.Range(min=500, max=100_000)
         ),
-        vol.Required(CONF_C_ROOM_RAD, default=_g(cfg, CONF_C_ROOM_RAD, DEFAULT_C_ROOM_RAD)): vol.All(
-            vol.Coerce(float), vol.Range(min=1000, max=20_000_000)
-        ),
-        vol.Required(CONF_K_RAD, default=_g(cfg, CONF_K_RAD, DEFAULT_K_RAD)): vol.All(
+        vol.Required(CONF_K_RAD, default=float(_g(cfg, CONF_K_RAD, DEFAULT_K_RAD))): vol.All(
             vol.Coerce(float), vol.Range(min=0.1, max=500)
         ),
-        vol.Required(CONF_FLOW_RATE_MAX, default=_g(cfg, CONF_FLOW_RATE_MAX, DEFAULT_FLOW_RATE_MAX)): vol.All(
+        vol.Required(CONF_RAD_EXPONENT, default=float(_g(cfg, CONF_RAD_EXPONENT, DEFAULT_RAD_EXPONENT))): vol.All(
+            vol.Coerce(float), vol.Range(min=1.0, max=2.0)
+        ),
+        vol.Required(CONF_FLOW_RATE_MAX, default=float(_g(cfg, CONF_FLOW_RATE_MAX, DEFAULT_FLOW_RATE_MAX))): vol.All(
             vol.Coerce(float), vol.Range(min=0.001, max=1.0)
         ),
-        vol.Required(CONF_HEAT_LOSS_COEFF_RAD, default=_g(cfg, CONF_HEAT_LOSS_COEFF_RAD, DEFAULT_HEAT_LOSS_COEFF_RAD)): vol.All(
+        vol.Required(CONF_HEAT_LOSS_COEFF_RAD, default=float(_g(cfg, CONF_HEAT_LOSS_COEFF_RAD, DEFAULT_HEAT_LOSS_COEFF_RAD))): vol.All(
             vol.Coerce(float), vol.Range(min=0.001, max=2000)
         ),
-        vol.Required(CONF_PIPE_DELAY, default=_g(cfg, CONF_PIPE_DELAY, DEFAULT_PIPE_DELAY)): vol.All(
+        vol.Required(CONF_C_ROOM_RAD, default=float(_g(cfg, CONF_C_ROOM_RAD, DEFAULT_C_ROOM_RAD))): vol.All(
+            vol.Coerce(float), vol.Range(min=1000, max=20_000_000)
+        ),
+        vol.Required(CONF_PIPE_DELAY, default=float(_g(cfg, CONF_PIPE_DELAY, DEFAULT_PIPE_DELAY))): vol.All(
             vol.Coerce(float), vol.Range(min=0, max=600)
         ),
         vol.Required(CONF_VALVE_CHARACTERISTIC, default=_g(cfg, CONF_VALVE_CHARACTERISTIC, DEFAULT_VALVE_CHARACTERISTIC)): vol.In(
@@ -404,56 +428,62 @@ def _radiator_model_schema(cfg: dict) -> vol.Schema:
 def _r2c2_radiator_model_schema(cfg: dict) -> vol.Schema:
     return vol.Schema({
         # Radiator
-        vol.Required(CONF_FLOW_TEMP, default=_g(cfg, CONF_FLOW_TEMP, DEFAULT_FLOW_TEMP)): vol.All(
+        vol.Required(CONF_FLOW_TEMP, default=float(_g(cfg, CONF_FLOW_TEMP, DEFAULT_FLOW_TEMP))): vol.All(
             vol.Coerce(float), vol.Range(min=20, max=90)
         ),
         vol.Optional(CONF_FLOW_TEMP_ENTITY, default=_g(cfg, CONF_FLOW_TEMP_ENTITY, "")): str,
-        vol.Required(CONF_C_RAD, default=_g(cfg, CONF_C_RAD, DEFAULT_C_RAD)): vol.All(
+        vol.Required(CONF_C_RAD, default=float(_g(cfg, CONF_C_RAD, DEFAULT_C_RAD))): vol.All(
             vol.Coerce(float), vol.Range(min=500, max=100_000)
         ),
-        vol.Required(CONF_K_RAD, default=_g(cfg, CONF_K_RAD, DEFAULT_K_RAD)): vol.All(
+        vol.Required(CONF_K_RAD, default=float(_g(cfg, CONF_K_RAD, DEFAULT_K_RAD))): vol.All(
             vol.Coerce(float), vol.Range(min=0.1, max=500)
         ),
-        vol.Required(CONF_RAD_EXPONENT, default=_g(cfg, CONF_RAD_EXPONENT, DEFAULT_RAD_EXPONENT)): vol.All(
+        vol.Required(CONF_RAD_EXPONENT, default=float(_g(cfg, CONF_RAD_EXPONENT, DEFAULT_RAD_EXPONENT))): vol.All(
             vol.Coerce(float), vol.Range(min=1.0, max=2.0)
         ),
-        vol.Required(CONF_RAD_CONVECTIVE_FRACTION, default=_g(cfg, CONF_RAD_CONVECTIVE_FRACTION, DEFAULT_RAD_CONVECTIVE_FRACTION)): vol.All(
+        vol.Required(CONF_RAD_CONVECTIVE_FRACTION, default=float(_g(cfg, CONF_RAD_CONVECTIVE_FRACTION, DEFAULT_RAD_CONVECTIVE_FRACTION))): vol.All(
             vol.Coerce(float), vol.Range(min=0.1, max=1.0)
         ),
-        vol.Required(CONF_FLOW_RATE_MAX, default=_g(cfg, CONF_FLOW_RATE_MAX, DEFAULT_FLOW_RATE_MAX)): vol.All(
+        vol.Required(CONF_FLOW_RATE_MAX, default=float(_g(cfg, CONF_FLOW_RATE_MAX, DEFAULT_FLOW_RATE_MAX))): vol.All(
             vol.Coerce(float), vol.Range(min=0.001, max=1.0)
         ),
-        vol.Required(CONF_PIPE_DELAY, default=_g(cfg, CONF_PIPE_DELAY, DEFAULT_PIPE_DELAY)): vol.All(
+        vol.Required(CONF_HEAT_LOSS_COEFF_RAD, default=float(_g(cfg, CONF_HEAT_LOSS_COEFF_RAD, DEFAULT_HEAT_LOSS_COEFF_RAD))): vol.All(
+            vol.Coerce(float), vol.Range(min=0.001, max=2000)
+        ),
+        vol.Required(CONF_C_ROOM_RAD, default=float(_g(cfg, CONF_C_ROOM_RAD, DEFAULT_C_ROOM_RAD))): vol.All(
+            vol.Coerce(float), vol.Range(min=1000, max=20_000_000)
+        ),
+        vol.Required(CONF_PIPE_DELAY, default=float(_g(cfg, CONF_PIPE_DELAY, DEFAULT_PIPE_DELAY))): vol.All(
             vol.Coerce(float), vol.Range(min=0, max=600)
         ),
         vol.Required(CONF_VALVE_CHARACTERISTIC, default=_g(cfg, CONF_VALVE_CHARACTERISTIC, DEFAULT_VALVE_CHARACTERISTIC)): vol.In(
             [VALVE_CHAR_LINEAR, VALVE_CHAR_QUICK_OPENING]
         ),
         # Room (R2C2)
-        vol.Required(CONF_C_AIR, default=_g(cfg, CONF_C_AIR, DEFAULT_C_AIR)): vol.All(
+        vol.Required(CONF_C_AIR, default=float(_g(cfg, CONF_C_AIR, DEFAULT_C_AIR))): vol.All(
             vol.Coerce(float), vol.Range(min=1000, max=2_000_000)
         ),
-        vol.Required(CONF_C_FABRIC, default=_g(cfg, CONF_C_FABRIC, DEFAULT_C_FABRIC)): vol.All(
+        vol.Required(CONF_C_FABRIC, default=float(_g(cfg, CONF_C_FABRIC, DEFAULT_C_FABRIC))): vol.All(
             vol.Coerce(float), vol.Range(min=10000, max=50_000_000)
         ),
-        vol.Required(CONF_R_FABRIC, default=_g(cfg, CONF_R_FABRIC, DEFAULT_R_FABRIC)): vol.All(
+        vol.Required(CONF_R_FABRIC, default=float(_g(cfg, CONF_R_FABRIC, DEFAULT_R_FABRIC))): vol.All(
             vol.Coerce(float), vol.Range(min=0.0001, max=1.0)
         ),
-        vol.Required(CONF_R_EXT, default=_g(cfg, CONF_R_EXT, DEFAULT_R_EXT)): vol.All(
+        vol.Required(CONF_R_EXT, default=float(_g(cfg, CONF_R_EXT, DEFAULT_R_EXT))): vol.All(
             vol.Coerce(float), vol.Range(min=0.0001, max=50.0)
         ),
-        vol.Required(CONF_R_INF, default=_g(cfg, CONF_R_INF, DEFAULT_R_INF)): vol.All(
+        vol.Required(CONF_R_INF, default=float(_g(cfg, CONF_R_INF, DEFAULT_R_INF))): vol.All(
             vol.Coerce(float), vol.Range(min=0.001, max=10.0)
         ),
         # Solar
-        vol.Required(CONF_WINDOW_AREA, default=_g(cfg, CONF_WINDOW_AREA, DEFAULT_WINDOW_AREA)): vol.All(
+        vol.Required(CONF_WINDOW_AREA, default=float(_g(cfg, CONF_WINDOW_AREA, DEFAULT_WINDOW_AREA))): vol.All(
             vol.Coerce(float), vol.Range(min=0, max=100)
         ),
-        vol.Required(CONF_WINDOW_TRANSMITTANCE, default=_g(cfg, CONF_WINDOW_TRANSMITTANCE, DEFAULT_WINDOW_TRANSMITTANCE)): vol.All(
+        vol.Required(CONF_WINDOW_TRANSMITTANCE, default=float(_g(cfg, CONF_WINDOW_TRANSMITTANCE, DEFAULT_WINDOW_TRANSMITTANCE))): vol.All(
             vol.Coerce(float), vol.Range(min=0, max=1)
         ),
         vol.Optional(CONF_SOLAR_ENTITY, default=_g(cfg, CONF_SOLAR_ENTITY, "")): str,
-        vol.Required(CONF_SOLAR_FIXED, default=_g(cfg, CONF_SOLAR_FIXED, DEFAULT_SOLAR_FIXED)): vol.All(
+        vol.Required(CONF_SOLAR_FIXED, default=float(_g(cfg, CONF_SOLAR_FIXED, DEFAULT_SOLAR_FIXED))): vol.All(
             vol.Coerce(float), vol.Range(min=0, max=1500)
         ),
         vol.Optional(CONF_CALIB_A,   default=0.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=10)),
@@ -462,9 +492,37 @@ def _r2c2_radiator_model_schema(cfg: dict) -> vol.Schema:
     })
 
 
+def _validate_sensor_options(data: dict) -> dict:
+    """Cross-field validator for sensor options.
+
+    Enforces two mutual-exclusion / ordering rules:
+      1. sensor_update_rate and Zigbee min/max/delta cannot both be active.
+      2. sensor_min_interval must be strictly less than sensor_max_interval
+         when both are non-zero.
+    """
+    has_simple_rate = float(data.get(CONF_SENSOR_UPDATE_RATE, 0)) > 0
+    has_zigbee = any(
+        float(data.get(k, 0)) > 0
+        for k in (CONF_SENSOR_MIN_INTERVAL, CONF_SENSOR_MAX_INTERVAL, CONF_SENSOR_DELTA)
+    )
+    if has_simple_rate and has_zigbee:
+        raise vol.Invalid(
+            "sensor_update_rate cannot be used together with Zigbee "
+            "min/max interval or delta. Set sensor_update_rate to 0 "
+            "when using Zigbee-style reporting."
+        )
+    min_i = float(data.get(CONF_SENSOR_MIN_INTERVAL, 0))
+    max_i = float(data.get(CONF_SENSOR_MAX_INTERVAL, 0))
+    if min_i > 0 and max_i > 0 and min_i >= max_i:
+        raise vol.Invalid(
+            "sensor_min_interval must be strictly less than sensor_max_interval."
+        )
+    return data
+
+
 def _sensor_options_schema(cfg: dict) -> vol.Schema:
-    """Sensor imperfection parameters (noise, bias, quantisation, lag)."""
-    return vol.Schema({
+    """Sensor imperfection parameters (noise, bias, quantisation, lag, Zigbee reporting)."""
+    raw_schema = vol.Schema({
         vol.Optional(CONF_SENSOR_NOISE_STD_DEV, default=_g(cfg, CONF_SENSOR_NOISE_STD_DEV, DEFAULT_SENSOR_NOISE_STD_DEV)): vol.All(
             vol.Coerce(float), vol.Range(min=0, max=10)
         ),
@@ -480,7 +538,19 @@ def _sensor_options_schema(cfg: dict) -> vol.Schema:
         vol.Optional(CONF_SENSOR_UPDATE_RATE, default=_g(cfg, CONF_SENSOR_UPDATE_RATE, DEFAULT_SENSOR_UPDATE_RATE)): vol.All(
             vol.Coerce(float), vol.Range(min=0, max=3600)
         ),
+        # Zigbee-style conditional reporting
+        vol.Optional(CONF_SENSOR_MIN_INTERVAL, default=_g(cfg, CONF_SENSOR_MIN_INTERVAL, DEFAULT_SENSOR_MIN_INTERVAL)): vol.All(
+            vol.Coerce(float), vol.Range(min=0, max=3600)
+        ),
+        vol.Optional(CONF_SENSOR_MAX_INTERVAL, default=_g(cfg, CONF_SENSOR_MAX_INTERVAL, DEFAULT_SENSOR_MAX_INTERVAL)): vol.All(
+            vol.Coerce(float), vol.Range(min=0, max=86400)
+        ),
+        vol.Optional(CONF_SENSOR_DELTA, default=_g(cfg, CONF_SENSOR_DELTA, DEFAULT_SENSOR_DELTA)): vol.All(
+            vol.Coerce(float), vol.Range(min=0, max=10)
+        ),
     })
+    # Wrap with cross-field validator
+    return vol.All(raw_schema, _validate_sensor_options)
 
 
 def _disturbances_options_schema(cfg: dict) -> vol.Schema:
@@ -553,18 +623,16 @@ def _thermal_model_schema_for_cfg(cfg: dict) -> vol.Schema:
 class HeatingSimulatorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Two-step setup: name/model selection → model physics parameters."""
 
-    VERSION = 2
+    VERSION = 1
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self):
         self._setup_data: dict[str, Any] = {}
 
     async def async_step_user(self, user_input=None) -> FlowResult:
         """Step 1: name, model type, control mode, temperatures, update interval."""
         if user_input is not None:
-            self._setup_data = dict(user_input)
+            self._setup_data = user_input
             model_type = user_input.get(CONF_MODEL_TYPE, MODEL_SIMPLE)
-            # Route to the appropriate model-params step
             if model_type == MODEL_R2C2:
                 return await self.async_step_model_r2c2()
             elif model_type == MODEL_RADIATOR:
@@ -572,11 +640,10 @@ class HeatingSimulatorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             elif model_type == MODEL_R2C2_RADIATOR:
                 return await self.async_step_model_r2c2_radiator()
             return await self.async_step_model_simple()
-
-        return self.async_show_form(step_id="user", data_schema=STEP_SETUP_SCHEMA)
+        return self.async_show_form(step_id="user", data_schema=STEP_USER_SCHEMA)
 
     async def async_step_model_simple(self, user_input=None) -> FlowResult:
-        """Step 2a: Simple (R1C1) model parameters."""
+        """Step 2a: Simple model parameters."""
         if user_input is not None:
             name = self._setup_data.get("name", "Heating Simulator")
             merged = {**self._setup_data, **user_input}
@@ -628,7 +695,7 @@ class HeatingSimulatorOptionsFlow(config_entries.OptionsFlow):
       General        — control mode, external temperature source, update interval
       Thermal Model  — model-specific physics parameters (calibration included)
       Disturbances   — occupancy, external temperature profile, wind, rain
-      Sensor         — sensor noise, bias, quantisation, lag
+      Sensor         — sensor noise, bias, quantisation, lag, Zigbee reporting
 
     All accumulated changes are written atomically when the user saves any
     sub-page and returns to the menu (or explicitly finishes).  Each sub-page
@@ -700,13 +767,21 @@ class HeatingSimulatorOptionsFlow(config_entries.OptionsFlow):
     # -- Sensor degradation ------------------------------------------------
 
     async def async_step_sensor(self, user_input=None) -> FlowResult:
-        """Sensor noise, bias, quantisation, and lag parameters."""
+        """Sensor noise, bias, quantisation, lag, and Zigbee reporting parameters."""
         cfg = self._cfg
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self._save_and_return(user_input)
+            try:
+                # Run the cross-field validator explicitly so we can surface errors
+                _validate_sensor_options(user_input)
+            except vol.Invalid as exc:
+                errors["base"] = str(exc)
+            else:
+                return self._save_and_return(user_input)
         return self.async_show_form(
             step_id="sensor",
             data_schema=_sensor_options_schema(cfg),
+            errors=errors,
         )
 
     # -- Helpers -----------------------------------------------------------
@@ -763,189 +838,95 @@ def apply_calibration_simple(user_input: dict, cfg: dict) -> dict:
     Back-calculate thermal_mass and heat_loss_coeff for the Simple model.
 
     Requires calib_a > 0 and either calib_tau > 0 or calib_b > 0.
-    Mapping (P = heater_power):
-        C = P / (a / 60)           [a in °C/min]
-        K = C / (tau × 60)         [tau in min]
+    If calibration fields are absent or zero, returns user_input unchanged.
     """
-    a   = float(user_input.get(CONF_CALIB_A,   0) or 0)
-    tau = float(user_input.get(CONF_CALIB_TAU, 0) or 0)
-    b   = float(user_input.get(CONF_CALIB_B,   0) or 0)
+    a   = float(user_input.get(CONF_CALIB_A,   0))
+    tau = float(user_input.get(CONF_CALIB_TAU, 0))
+    b   = float(user_input.get(CONF_CALIB_B,   0))
+    P   = float(user_input.get(CONF_HEATER_POWER, cfg.get(CONF_HEATER_POWER, DEFAULT_HEATER_POWER)))
 
     if a <= 0:
         return user_input
-    if tau <= 0 and b > 0:
-        tau = 1.0 / b
-    if tau <= 0:
+    if tau > 0:
+        b = 1.0 / tau
+    if b <= 0:
         return user_input
 
-    P = float(user_input.get(CONF_HEATER_POWER, _g(cfg, CONF_HEATER_POWER, DEFAULT_HEATER_POWER)))
-    thermal_mass    = P / (a / 60.0)
-    heat_loss_coeff = thermal_mass / (tau * 60.0)
-
-    out = dict(user_input)
-    out[CONF_THERMAL_MASS]    = round(thermal_mass, 1)
-    out[CONF_HEAT_LOSS_COEFF] = round(heat_loss_coeff, 6)
-    out.pop(CONF_CALIB_A,   None)
-    out.pop(CONF_CALIB_B,   None)
-    out.pop(CONF_CALIB_TAU, None)
-    return out
+    # dT/dt = a * u  −  b * (T − T_ext)
+    # At heating: C * dT/dt = P * u − K * (T − T_ext)
+    # → a [°C/min] → a/60 [°C/s]
+    # C = P / (a/60) = P * 60 / a
+    # K = b/60 * C = b/60 * P * 60 / a = b * P / a
+    a_per_s = a / 60.0
+    b_per_s = b / 60.0
+    C = P / a_per_s
+    K = b_per_s * C
+    user_input = dict(user_input)
+    user_input[CONF_THERMAL_MASS]    = round(C, 1)
+    user_input[CONF_HEAT_LOSS_COEFF] = round(K, 4)
+    return user_input
 
 
 def apply_calibration_r2c2(user_input: dict, cfg: dict) -> dict:
     """
-    Back-calculate r_ext for the R2C2 model from the observed long-term cooling
-    time constant tau (or b = 1/tau) via bisection on the slow eigenvalue.
+    Back-calculate c_air and r_ext for the R2C2 model from observed cooling behaviour.
 
-    c_air, c_fabric, r_fabric, r_inf and heater_power are unchanged.
+    Only tau (or b) is used — the R2C2 infiltration path is lumped into r_ext.
+    calib_a is not meaningful for R2C2 (no single heater power node).
     """
-    tau = float(user_input.get(CONF_CALIB_TAU, 0) or 0)
-    b   = float(user_input.get(CONF_CALIB_B,   0) or 0)
+    tau = float(user_input.get(CONF_CALIB_TAU, 0))
+    b   = float(user_input.get(CONF_CALIB_B,   0))
 
-    if tau <= 0 and b > 0:
-        tau = 1.0 / b
-    if tau <= 0:
+    if tau > 0:
+        b = 1.0 / tau
+    if b <= 0:
         return user_input
 
-    c_air  = float(user_input.get(CONF_C_AIR,    _g(cfg, CONF_C_AIR,    DEFAULT_C_AIR)))
-    c_fab  = float(user_input.get(CONF_C_FABRIC,  _g(cfg, CONF_C_FABRIC,  DEFAULT_C_FABRIC)))
-    r_fab  = float(user_input.get(CONF_R_FABRIC,  _g(cfg, CONF_R_FABRIC,  DEFAULT_R_FABRIC)))
-    r_inf  = float(user_input.get(CONF_R_INF,     _g(cfg, CONF_R_INF,     DEFAULT_R_INF)))
-
-    target_lambda = -1.0 / (tau * 60.0)
-
-    def slow_eigenvalue(r_ext: float) -> float:
-        import math as _math
-        K_inf = 1.0 / r_inf
-        K_fab = 1.0 / r_fab
-        K_ext = 1.0 / r_ext
-        a11 = -(K_inf + K_fab) / c_air
-        a12 =  K_fab / c_air
-        a21 =  K_fab / c_fab
-        a22 = -(K_fab + K_ext) / c_fab
-        tr   = a11 + a22
-        det  = a11 * a22 - a12 * a21
-        disc = tr * tr - 4.0 * det
-        if disc < 0:
-            return tr / 2.0
-        sqrt_disc = _math.sqrt(disc)
-        return max((tr + sqrt_disc) / 2.0, (tr - sqrt_disc) / 2.0)
-
-    def f(r_ext: float) -> float:
-        return slow_eigenvalue(r_ext) - target_lambda
-
-    lo, hi = 0.0001, 100.0
-    f_lo, f_hi = f(lo), f(hi)
-
-    if f_lo > 0:
-        r_ext_new = lo
-    elif f_hi < 0:
-        r_ext_new = hi
-    else:
-        for _ in range(64):
-            mid = (lo + hi) / 2.0
-            if f(mid) < 0:
-                lo = mid
-            else:
-                hi = mid
-        r_ext_new = (lo + hi) / 2.0
-
-    out = dict(user_input)
-    out[CONF_R_EXT] = round(r_ext_new, 6)
-    out.pop(CONF_CALIB_A,   None)
-    out.pop(CONF_CALIB_B,   None)
-    out.pop(CONF_CALIB_TAU, None)
-    return out
+    # For the air node dominant approximation:
+    # τ_air ≈ C_air * R_ext  (minutes)
+    # → R_ext = τ / (C_air * 60)
+    b_per_s = b / 60.0
+    c_air = float(user_input.get(CONF_C_AIR, cfg.get(CONF_C_AIR, DEFAULT_C_AIR)))
+    r_ext = 1.0 / (b_per_s * c_air)
+    user_input = dict(user_input)
+    user_input[CONF_R_EXT] = round(r_ext, 6)
+    return user_input
 
 
 def apply_calibration_radiator(user_input: dict, cfg: dict) -> dict:
     """
-    Back-calculate c_room and heat_loss_coeff for the simple wet-radiator model.
-
-    Requires calib_a > 0 and calib_tau (or calib_b > 0).
-    Mapping:
-        C_room = Q_out_ss / (a / 60)
-        K_loss = C_room / (tau × 60)
+    Back-calculate heat_loss_coeff_rad and c_room_rad for the Wet Radiator model.
     """
-    a   = float(user_input.get(CONF_CALIB_A,   0) or 0)
-    tau = float(user_input.get(CONF_CALIB_TAU, 0) or 0)
-    b   = float(user_input.get(CONF_CALIB_B,   0) or 0)
+    a   = float(user_input.get(CONF_CALIB_A,   0))
+    tau = float(user_input.get(CONF_CALIB_TAU, 0))
+    b   = float(user_input.get(CONF_CALIB_B,   0))
 
-    if a <= 0:
-        return user_input
-    if tau <= 0 and b > 0:
-        tau = 1.0 / b
-    if tau <= 0:
+    if tau > 0:
+        b = 1.0 / tau
+    if a <= 0 or b <= 0:
         return user_input
 
-    k_rad  = float(_g(cfg, CONF_K_RAD,       DEFAULT_K_RAD))
-    n      = float(_g(cfg, CONF_RAD_EXPONENT, DEFAULT_RAD_EXPONENT))
-    T_flow = float(user_input.get(CONF_FLOW_TEMP, _g(cfg, CONF_FLOW_TEMP, DEFAULT_FLOW_TEMP)))
-    flow_rate = float(_g(cfg, CONF_FLOW_RATE_MAX, DEFAULT_FLOW_RATE_MAX))
-    T_ext  = float(user_input.get(CONF_EXTERNAL_TEMP_FIXED, _g(cfg, CONF_EXTERNAL_TEMP_FIXED, DEFAULT_EXTERNAL_TEMP_FIXED)))
-    T_room = T_ext + 15.0
+    k_rad      = float(user_input.get(CONF_K_RAD,      cfg.get(CONF_K_RAD,      DEFAULT_K_RAD)))
+    n          = float(user_input.get(CONF_RAD_EXPONENT,cfg.get(CONF_RAD_EXPONENT,DEFAULT_RAD_EXPONENT)))
+    T_flow     = float(user_input.get(CONF_FLOW_TEMP,   cfg.get(CONF_FLOW_TEMP,   DEFAULT_FLOW_TEMP)))
+    flow_rate  = float(user_input.get(CONF_FLOW_RATE_MAX,cfg.get(CONF_FLOW_RATE_MAX,DEFAULT_FLOW_RATE_MAX)))
+    T_room_op  = 20.0  # operating point assumption
 
-    Q_out_ss = _q_out_at_operating_point(k_rad, n, T_flow, T_room, flow_rate)
-    c_room   = Q_out_ss / (a / 60.0)
-    k_loss   = c_room / (tau * 60.0)
+    Q_rad = _q_out_at_operating_point(k_rad, n, T_flow, T_room_op, flow_rate)
 
-    out = dict(user_input)
-    out[CONF_C_ROOM_RAD]          = round(c_room, 1)
-    out[CONF_HEAT_LOSS_COEFF_RAD] = round(k_loss, 4)
-    out.pop(CONF_CALIB_A,   None)
-    out.pop(CONF_CALIB_B,   None)
-    out.pop(CONF_CALIB_TAU, None)
-    return out
+    a_per_s = a / 60.0
+    b_per_s = b / 60.0
+    C = Q_rad / a_per_s
+    K = b_per_s * C
+    user_input = dict(user_input)
+    user_input[CONF_C_ROOM_RAD]        = round(C, 1)
+    user_input[CONF_HEAT_LOSS_COEFF_RAD] = round(K, 4)
+    return user_input
 
 
 def apply_calibration_r2c2_radiator(user_input: dict, cfg: dict) -> dict:
     """
-    Back-calculate c_air and r_ext for the R2C2+Radiator model.
-
-    Requires calib_a > 0 and calib_tau (or calib_b > 0).
-    Mapping:
-        c_air  = Q_conv_ss / (a / 60)    where Q_conv_ss = conv_frac × Q_out_ss
-        c_fabric scaled to preserve existing c_fabric/c_air ratio
-        r_ext  derived from tau: K_ext = (c_air+c_fabric)/(tau×60) − K_inf
+    Back-calculate r_ext (R2C2 cooling) for the R2C2 + Radiator model.
+    Uses the same tau→r_ext path as the pure R2C2 model.
     """
-    a   = float(user_input.get(CONF_CALIB_A,   0) or 0)
-    tau = float(user_input.get(CONF_CALIB_TAU, 0) or 0)
-    b   = float(user_input.get(CONF_CALIB_B,   0) or 0)
-
-    if a <= 0:
-        return user_input
-    if tau <= 0 and b > 0:
-        tau = 1.0 / b
-    if tau <= 0:
-        return user_input
-
-    k_rad     = float(_g(cfg, CONF_K_RAD,                  DEFAULT_K_RAD))
-    n         = float(_g(cfg, CONF_RAD_EXPONENT,            DEFAULT_RAD_EXPONENT))
-    conv_frac = float(_g(cfg, CONF_RAD_CONVECTIVE_FRACTION, DEFAULT_RAD_CONVECTIVE_FRACTION))
-    T_flow    = float(user_input.get(CONF_FLOW_TEMP, _g(cfg, CONF_FLOW_TEMP, DEFAULT_FLOW_TEMP)))
-    flow_rate = float(_g(cfg, CONF_FLOW_RATE_MAX,           DEFAULT_FLOW_RATE_MAX))
-    r_inf     = float(user_input.get(CONF_R_INF, _g(cfg, CONF_R_INF, DEFAULT_R_INF)))
-    T_ext     = float(user_input.get(CONF_EXTERNAL_TEMP_FIXED, _g(cfg, CONF_EXTERNAL_TEMP_FIXED, DEFAULT_EXTERNAL_TEMP_FIXED)))
-    T_room    = T_ext + 15.0
-
-    c_air_cur = float(_g(cfg, CONF_C_AIR,    DEFAULT_C_AIR))
-    c_fab_cur = float(_g(cfg, CONF_C_FABRIC, DEFAULT_C_FABRIC))
-    fab_ratio = c_fab_cur / c_air_cur if c_air_cur > 0 else (DEFAULT_C_FABRIC / DEFAULT_C_AIR)
-
-    Q_out_ss  = _q_out_at_operating_point(k_rad, n, T_flow, T_room, flow_rate)
-    Q_conv_ss = Q_out_ss * conv_frac
-    c_air_new = Q_conv_ss / (a / 60.0)
-    c_fab_new = fab_ratio * c_air_new
-
-    K_inf = 1.0 / r_inf
-    K_total_needed = (c_air_new + c_fab_new) / (tau * 60.0)
-    K_ext = K_total_needed - K_inf
-    r_ext_new = max(0.0001, min(50.0, 1.0 / K_ext)) if K_ext > 0 else 50.0
-
-    out = dict(user_input)
-    out[CONF_C_AIR]    = round(c_air_new, 1)
-    out[CONF_C_FABRIC] = round(c_fab_new, 1)
-    out[CONF_R_EXT]    = round(r_ext_new, 6)
-    out.pop(CONF_CALIB_A,   None)
-    out.pop(CONF_CALIB_B,   None)
-    out.pop(CONF_CALIB_TAU, None)
-    return out
+    return apply_calibration_r2c2(user_input, cfg)
