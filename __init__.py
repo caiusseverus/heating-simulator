@@ -221,38 +221,38 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Migrate config entries to the current schema version (1).
+    """Migrate config entries to the current schema version (2).
 
-    All parameters added since version 1 are optional with zero/False defaults,
-    so no data transformation is ever required.  This handler simply stamps
-    any entry that was stored at an older version up to version 1 so that HA
-    stops reporting a missing migration handler on startup.
+    All parameters added across versions are optional with zero/False defaults,
+    so no data transformation is ever required between any two versions.
+    This handler stamps entries stored at any version ≤ 2 up to version 2,
+    eliminating the "migration handler not found" errors on startup.
 
-    If the stored version is somehow *higher* than what the code supports,
+    If the stored version is somehow higher than what the code supports,
     we refuse the migration and log an error rather than silently corrupting
     the entry.
     """
     _LOGGER.debug(
-        "Migrating %s entry %s from version %s to version 1",
+        "Migrating %s entry %s from version %s to version 2",
         DOMAIN,
         entry.entry_id,
         entry.version,
     )
 
-    if entry.version > 1:
+    if entry.version > 2:
         _LOGGER.error(
             "Cannot migrate %s entry %s: stored version %s is newer than "
-            "the integration supports (1). Upgrade the integration.",
+            "the integration supports (2). Upgrade the integration.",
             DOMAIN,
             entry.entry_id,
             entry.version,
         )
         return False
 
-    # version 1 → 1: no-op data transformation required
-    hass.config_entries.async_update_entry(entry, version=1)
+    # version 1 → 2 and version 2 → 2: no data transformation needed
+    hass.config_entries.async_update_entry(entry, version=2)
     _LOGGER.info(
-        "Migrated %s entry %s to version 1 (no data changes needed)",
+        "Migrated %s entry %s to version 2 (no data changes needed)",
         DOMAIN,
         entry.entry_id,
     )

@@ -623,7 +623,7 @@ def _thermal_model_schema_for_cfg(cfg: dict) -> vol.Schema:
 class HeatingSimulatorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Two-step setup: name/model selection → model physics parameters."""
 
-    VERSION = 1
+    VERSION = 2
 
     def __init__(self):
         self._setup_data: dict[str, Any] = {}
