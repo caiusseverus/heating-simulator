@@ -189,6 +189,9 @@ class SimpleThermalModel:
     def set_external_temperature(self, temp: float) -> None:
         self.external_temperature = temp
 
+    def restore_room_temp(self, temp: float) -> None:
+        self.temperature = temp
+
     def step(self, dt: float) -> None:
         if dt <= 0:
             return
@@ -330,6 +333,12 @@ class R2C2ThermalModel:
     def set_solar_irradiance(self, irradiance: float) -> None:
         """Set solar irradiance in W/m²."""
         self.solar_irradiance = max(0.0, irradiance)
+
+    def restore_room_temp(self, temp: float) -> None:
+        self.t_air = temp
+
+    def restore_fabric_temp(self, temp: float) -> None:
+        self.t_fabric = temp
 
     @property
     def temperature(self) -> float:
@@ -572,6 +581,12 @@ class WetRadiatorModel:
 
     def set_flow_temperature(self, temp: float) -> None:
         self.flow_temperature = temp
+
+    def restore_room_temp(self, temp: float) -> None:
+        self.t_room = temp
+
+    def restore_radiator_temp(self, temp: float) -> None:
+        self.t_rad = temp
 
     def step(self, dt: float) -> None:
         if dt <= 0:
@@ -882,6 +897,15 @@ class R2C2RadiatorModel:
 
     def set_flow_temperature(self, temp: float) -> None:
         self.flow_temperature = temp
+
+    def restore_room_temp(self, temp: float) -> None:
+        self.t_air = temp
+
+    def restore_fabric_temp(self, temp: float) -> None:
+        self.t_fabric = temp
+
+    def restore_radiator_temp(self, temp: float) -> None:
+        self.t_rad = temp
 
     # ------------------------------------------------------------------
     # Integration

@@ -40,7 +40,7 @@ CONF_WINDOW_TRANSMITTANCE = "window_transmittance"
 CONF_FLOW_TEMP = "flow_temperature"          # °C  boiler flow temperature
 CONF_FLOW_TEMP_ENTITY = "flow_temperature_entity"
 CONF_C_RAD = "c_radiator"                    # J/°C  — radiator water+metal thermal mass
-CONF_K_RAD = "k_radiator"                    # W/°C^n  — radiator emission coefficient
+CONF_K_RAD = "k_radiator"                   # W/°C^n  — radiator emission coefficient
 CONF_RAD_EXPONENT = "radiator_exponent"      # n ≈ 1.3 for panel rads (BS EN 442)
 CONF_RAD_CONVECTIVE_FRACTION = "radiator_convective_fraction"  # fraction of Q_out to air node
 CONF_FLOW_RATE_MAX = "flow_rate_max_kg_s"    # kg/s max water flow rate
@@ -98,49 +98,31 @@ DEFAULT_THERMAL_INERTIA = 0.0
 
 # Defaults — R2C2
 # Represents a typical furnished room (~20 m²) with moderate insulation.
-# IMPORTANT: c_air represents air + ALL room contents (furniture, carpet, curtains)
-# that heat up on the same timescale as the air (minutes). It is NOT just the air mass.
-# Air alone in 50m³ ≈ 60,000 J/°C; furnished room ≈ 300,000–500,000 J/°C.
-DEFAULT_C_AIR = 350_000.0        # J/°C  (air + furniture + soft furnishings + surface layers)
-# c_fabric is ONLY the building fabric (walls, floor, ceiling).
-# A 20m² brick cavity room has ~60m² of surfaces × 120 kg/m² × 840 J/(kg·°C) ≈ 6,000,000 J/°C.
-# Timber-frame/plasterboard is lighter: ~500,000 J/°C.
-DEFAULT_C_FABRIC = 5_000_000.0   # J/°C  (brick cavity construction, 60m² surfaces)
-DEFAULT_R_FABRIC = 0.005         # °C/W  (good internal surface conductance)
-DEFAULT_R_EXT = 0.020            # °C/W  (~50 W/°C at ΔT=1; moderate insulation)
-DEFAULT_R_INF = 0.067            # °C/W  (~0.5 ACH infiltration)
+DEFAULT_C_AIR = 50000.0
+DEFAULT_C_FABRIC = 3000000.0
+DEFAULT_R_FABRIC = 0.01
+DEFAULT_R_EXT = 2.0
+DEFAULT_R_INF = 0.5
 DEFAULT_HEATER_POWER_R2C2 = 2000.0
-DEFAULT_SOLAR_FIXED = 0.0        # W/m²
-DEFAULT_WINDOW_AREA = 2.0        # m²
+DEFAULT_SOLAR_FIXED = 0.0
+DEFAULT_WINDOW_AREA = 2.0
 DEFAULT_WINDOW_TRANSMITTANCE = 0.6
 
-# Defaults — Wet radiator
-DEFAULT_FLOW_TEMP = 70.0         # °C  traditional boiler
-DEFAULT_C_RAD = 8_000.0          # J/°C  (medium double panel radiator + water)
-DEFAULT_K_RAD = 10.0             # W/°C^n (size coefficient)
-DEFAULT_RAD_EXPONENT = 1.3       # BS EN 442 panel radiator
-# Convective fraction: fraction of Q_out that heats the air node directly.
-# The remainder is longwave radiation absorbed directly by fabric surfaces.
-# BS EN 442 values by radiator type:
-#   Type 10 (single panel, no fins):   ~50% convective
-#   Type 11 (single panel + fins):     ~65% convective
-#   Type 21 (double panel + fins):     ~75% convective
-#   Type 22 (double panel, 2× fins):   ~80% convective  ← most common UK domestic
-#   Fan coil / convector:              ~90–95% convective
-#   Underfloor heating (water):        ~50% convective
-# Default 0.75 suits a typical type 21/22 panel radiator.
+# Defaults — wet radiator
+DEFAULT_FLOW_TEMP = 70.0
+DEFAULT_C_RAD = 10000.0
+DEFAULT_K_RAD = 10.0
+DEFAULT_RAD_EXPONENT = 1.3
 DEFAULT_RAD_CONVECTIVE_FRACTION = 0.75
-DEFAULT_FLOW_RATE_MAX = 0.05     # kg/s  (~3 L/min)
+DEFAULT_FLOW_RATE_MAX = 0.05
 DEFAULT_HEAT_LOSS_COEFF_RAD = 50.0
-DEFAULT_C_ROOM_RAD = 500_000.0   # J/°C  (air + all room contents, same definition as c_air)
-DEFAULT_PIPE_DELAY = 0.0         # seconds
+DEFAULT_C_ROOM_RAD = 350000.0
+DEFAULT_PIPE_DELAY = 0.0
 DEFAULT_VALVE_CHARACTERISTIC = VALVE_CHAR_LINEAR
 
 # ---------------------------------------------------------------------------
-# Config keys — Sensor imperfection suite (F-02, F-04, F-07)
+# Config keys — sensor imperfection pipeline
 # ---------------------------------------------------------------------------
-# All parameters are optional; omitting them (or setting to 0) disables
-# the corresponding effect so the sensor behaves identically to before.
 CONF_SENSOR_NOISE_STD_DEV   = "sensor_noise_std_dev"   # °C  — Gaussian noise σ
 CONF_SENSOR_BIAS            = "sensor_bias"             # °C  — fixed additive offset
 CONF_SENSOR_QUANTISATION    = "sensor_quantisation"     # °C  — minimum reportable step
@@ -153,6 +135,25 @@ DEFAULT_SENSOR_BIAS          = 0.0
 DEFAULT_SENSOR_QUANTISATION  = 0.0
 DEFAULT_SENSOR_LAG_TAU       = 0.0
 DEFAULT_SENSOR_UPDATE_RATE   = 0.0
+
+# ---------------------------------------------------------------------------
+# Config keys — Zigbee-style conditional reporting (F-NEW)
+# ---------------------------------------------------------------------------
+# Models the min-interval / max-interval / delta reporting behaviour of
+# Zigbee and Z-Wave sensors.  All three default to 0 (disabled) so existing
+# configurations remain back-compatible.
+#
+# Cannot be used simultaneously with CONF_SENSOR_UPDATE_RATE (validated in
+# the options flow).
+#
+CONF_SENSOR_MIN_INTERVAL = "sensor_min_interval_s"  # s   — shortest period between any two reports
+CONF_SENSOR_MAX_INTERVAL = "sensor_max_interval_s"  # s   — heartbeat: maximum period even if no change
+CONF_SENSOR_DELTA        = "sensor_delta"           # °C  — minimum post-quantisation change to report
+
+# Defaults — Zigbee reporting (all zero = disabled, back-compatible)
+DEFAULT_SENSOR_MIN_INTERVAL = 0.0
+DEFAULT_SENSOR_MAX_INTERVAL = 0.0
+DEFAULT_SENSOR_DELTA        = 0.0
 
 # ---------------------------------------------------------------------------
 # Config keys — F-11  External temperature profile

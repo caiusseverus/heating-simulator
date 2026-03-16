@@ -455,6 +455,7 @@ T_reported(t) = T_reported(t−1) + α × (T_true − T_reported(t−1))
 ```
 
 **Default:** 0 (disabled). **Recommended values:**
+
 - Zigbee TRV sensor in plastic housing: 10–30 s
 - Sensor mounted on cold wall: 30–120 s
 - Ideal sensor: 0
@@ -466,6 +467,7 @@ T_reported(t) = T_reported(t−1) + α × (T_true − T_reported(t−1))
 A fixed additive offset to the reported temperature. Simulates a miscalibrated sensor. A positive bias causes the sensor to read high, which makes a controller under-heat (the controller thinks the room is warmer than it is).
 
 **Default:** 0 °C. **Recommended values:**
+
 - Sensor near cold external wall: −1.0 to −2.0 °C (reads low)
 - Miscalibrated budget TRV: ±1–3 °C
 - Ideal: 0
@@ -477,11 +479,12 @@ A fixed additive offset to the reported temperature. Simulates a miscalibrated s
 Gaussian white noise added to the reported value on every tick. Simulates electrical noise and quantisation variation.
 
 **Default:** 0 °C. **Recommended values:**
+
 - Ideal sensor: 0
 - Zigbee TRV: 0.1–0.2 °C σ
 - Budget TRV: 0.3–0.5 °C σ
 
-**Note:** If noise σ is close to half the quantisation step, the reported value may chatter between two adjacent quanta. This is physically realistic but may be surprising. Use `sensor_update_rate` to suppress it.
+**Note:** If noise σ is close to half the quantisation step, the reported value may chatter between two adjacent quanta. This is physically realistic but may be surprising. Use `sensor_update_rate` or the Zigbee delta threshold (Stage 6) to suppress it.
 
 ---
 
@@ -490,32 +493,77 @@ Gaussian white noise added to the reported value on every tick. Simulates electr
 The minimum reportable temperature increment. The reported value is rounded to the nearest multiple of this parameter.
 
 **Default:** 0 (disabled — continuous). **Recommended values:**
+
 - High-resolution sensor: 0.01–0.05 °C
 - Zigbee TRV: 0.1 °C
 - Budget TRV: 0.5 °C
 
 ---
 
-**Stage 5 — Rate limit (`sensor_update_rate`, seconds)**
+**Stage 5 — Fixed rate limit (`sensor_update_rate`, seconds)**
 
-Minimum interval between state changes. If the interval since the last reported value has not elapsed, the previous value is re-emitted. Simulates sensors that only transmit on change or at a fixed interval.
+Minimum interval between state changes. If the interval since the last reported value has not elapsed, the previous value is re-emitted. Simulates sensors that only transmit at a fixed interval regardless of whether the value has changed.
 
 **Default:** 0 (report every tick). **Recommended values:**
+
 - Continuous sensor: 0
-- Zigbee TRV (reports on change, min 30 s): 30
 - Battery-powered sensor (reports every 5 min): 300
 
 **Caution:** When rate-limiting is active and the room changes slowly, the sensor may hold the same value for long periods. Home Assistant state-changed automations will not fire during these silent periods. This intentionally simulates the Zigbee/Z-Wave TRV failure mode.
 
+**Mutual exclusion:** `sensor_update_rate` cannot be used at the same time as the Zigbee parameters (Stage 6). Set it to 0 when using Stage 6.
+
+---
+
+**Stage 6 — Zigbee-style conditional reporting (`sensor_min_interval`, `sensor_max_interval`, `sensor_delta`)**
+
+Simulates the conditional reporting behaviour of Zigbee and Z-Wave sensors. Three cooperating rules replace the simple fixed rate-limit:
+
+| Parameter | Key | Description | Default |
+| --- | --- | --- | --- |
+| Minimum interval | `sensor_min_interval_s` | Shortest time between any two reports (s) | 0 (disabled) |
+| Maximum interval | `sensor_max_interval_s` | Heartbeat — always report at least this often, even if value unchanged (s) | 0 (disabled) |
+| Delta threshold | `sensor_delta` | Minimum post-quantisation change in °C required to trigger a report | 0 (disabled) |
+
+**Logic (evaluated each tick):**
+
+| Heartbeat due? | Min interval elapsed? | Delta crossed? | Action |
+| --- | --- | --- | --- |
+| Yes | any | any | **Emit** (keepalive) |
+| No  | Yes | Yes | **Emit** (change report) |
+| No  | Yes | No  | Suppress |
+| No  | No  | any | Suppress |
+
+Setting all three to 0 disables Stage 6 entirely.
+
+**Interaction with quantisation:** the delta comparison is performed against the post-quantisation value, so Stage 4 runs first. With a quantisation step of 0.1 °C and a delta of 0.05 °C, a report fires whenever the rounded value moves to a new quantum (i.e. every full 0.1 °C step). This matches real Zigbee sensor firmware behaviour and prevents chatter at quantum boundaries.
+
+**Rounding convention:** standard half-up rounding (Python `round()`). A true temperature rise of exactly 0.05 °C will reach the next 0.1 °C quantum and cross a 0.05 °C delta threshold; a rise of 0.04 °C will not.
+
+**Mutual exclusion with Stage 5:** `sensor_update_rate` and the Zigbee parameters cannot both be non-zero simultaneously. The options flow enforces this and displays an error if both are set. Set `sensor_update_rate` to 0 when using Zigbee-style reporting.
+
+**State restoration:** Zigbee state (last reported value and last report time) is seeded from the restored room temperature on HA restart. This prevents a spurious immediate heartbeat report on boot.
+
+**Recommended values:**
+
+- Typical Zigbee TRV (e.g. Aqara, Sonoff SNZB-02): min 30 s, max 600 s, delta 0.1 °C
+- Aggressive reporting: min 10 s, max 300 s, delta 0.05 °C
+- Conservative battery saving: min 60 s, max 1800 s, delta 0.5 °C
+
+---
+
 ### Example presets
 
-| Scenario | `lag_tau` | `bias` | `noise_std` | `quantisation` | `update_rate` |
-|---|---|---|---|---|---|
-| Ideal (default) | 0 | 0 | 0 | 0 | 0 |
-| Budget TRV | 0 | 0 | 0.5 | 0.5 | 60 |
-| Smart TRV (Zigbee) | 10 | 0 | 0.1 | 0.1 | 30 |
-| Miscalibrated sensor | 0 | +2.0 | 0.1 | 0 | 0 |
-| Wall-mounted (cold wall) | 60 | −1.5 | 0.1 | 0.1 | 0 |
+| Scenario | `lag_tau` | `bias` | `noise_std` | `quantisation` | `update_rate` | `min_interval` | `max_interval` | `delta` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Ideal (default) | 0   | 0   | 0   | 0   | 0   | 0   | 0   | 0   |
+| Budget TRV | 0   | 0   | 0.5 | 0.5 | 60  | 0   | 0   | 0   |
+| Smart TRV — Zigbee | 10  | 0   | 0.1 | 0.1 | 0   | 30  | 600 | 0.1 |
+| Miscalibrated sensor | 0   | +2.0 | 0.1 | 0   | 0   | 0   | 0   | 0   |
+| Wall-mounted (cold wall) | 60  | −1.5 | 0.1 | 0.1 | 0   | 0   | 0   | 0   |
+| Zigbee — aggressive | 10  | 0   | 0.1 | 0.1 | 0   | 10  | 300 | 0.05 |
+
+The **Smart TRV — Zigbee** preset replaces the earlier "Smart TRV (Zigbee)" preset which used `update_rate = 30`. The new preset is more physically accurate: the sensor now suppresses trivial noise-driven changes (delta gate) while still guaranteeing a report every 10 minutes as a keepalive heartbeat.
 
 ---
 
