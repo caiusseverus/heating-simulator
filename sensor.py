@@ -673,4 +673,4 @@ class ReturnTemperatureSensor(_Base):
 
     @property
     def native_value(self):
-        return round(self._sim.model.t_return, 2)
+        return round(self._sim.model.return_temperature, 2)
