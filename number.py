@@ -6,6 +6,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import (
     DOMAIN, MODEL_RADIATOR, MODEL_R2C2, MODEL_R2C2_RADIATOR,
@@ -49,7 +50,7 @@ def _device(entry):
     return DeviceInfo(identifiers={(DOMAIN, entry.entry_id)}, name=entry.title)
 
 
-class _BaseNumber(NumberEntity):
+class _BaseNumber(NumberEntity, RestoreEntity):
     _attr_has_entity_name = True
     _attr_should_poll = False
 
@@ -59,6 +60,7 @@ class _BaseNumber(NumberEntity):
         self._unsub = None
 
     async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
         self._unsub = self._sim.register_listener(self._on_update)
 
     async def async_will_remove_from_hass(self) -> None:
@@ -68,6 +70,17 @@ class _BaseNumber(NumberEntity):
     @callback
     def _on_update(self) -> None:
         self.async_write_ha_state()
+
+    async def _async_restore_number(self) -> float | None:
+        if self._sim.snapshot_restored:
+            return None
+        last_state = await self.async_get_last_state()
+        if last_state is None or last_state.state in ("unknown", "unavailable", None):
+            return None
+        try:
+            return float(last_state.state)
+        except (TypeError, ValueError):
+            return None
 
 
 class PowerInputNumber(_BaseNumber):
@@ -95,6 +108,12 @@ class PowerInputNumber(_BaseNumber):
     def native_value(self):
         return self._sim.power_percent
 
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        restored = await self._async_restore_number()
+        if restored is not None:
+            self._sim.set_linear_power(restored)
+
     async def async_set_native_value(self, value: float) -> None:
         self._sim.set_linear_power(value)
 
@@ -115,6 +134,14 @@ class ExternalTempOverride(_BaseNumber):
     @property
     def native_value(self):
         return self._sim.model.external_temperature
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        restored = await self._async_restore_number()
+        if restored is not None:
+            self._sim.model.set_external_temperature(restored)
+            self._sim._notify_listeners()
+            self._sim._schedule_state_save()
 
     async def async_set_native_value(self, value: float) -> None:
         self._sim.model.set_external_temperature(value)
@@ -139,6 +166,14 @@ class SolarIrradianceOverride(_BaseNumber):
     def native_value(self):
         return self._sim.model.solar_irradiance
 
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        restored = await self._async_restore_number()
+        if restored is not None:
+            self._sim.model.set_solar_irradiance(restored)
+            self._sim._notify_listeners()
+            self._sim._schedule_state_save()
+
     async def async_set_native_value(self, value: float) -> None:
         self._sim.model.set_solar_irradiance(value)
         self._sim._notify_listeners()
@@ -161,6 +196,14 @@ class FlowTempOverride(_BaseNumber):
     @property
     def native_value(self):
         return self._sim.model.flow_temperature
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        restored = await self._async_restore_number()
+        if restored is not None:
+            self._sim.model.set_flow_temperature(restored)
+            self._sim._notify_listeners()
+            self._sim._schedule_state_save()
 
     async def async_set_native_value(self, value: float) -> None:
         self._sim.model.set_flow_temperature(value)
@@ -191,6 +234,12 @@ class WindSpeedNumber(_BaseNumber):
     def native_value(self):
         return self._sim.wind_speed
 
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        restored = await self._async_restore_number()
+        if restored is not None:
+            self._sim.set_weather(wind_speed_m_s=restored)
+
     async def async_set_native_value(self, value: float) -> None:
         self._sim.set_weather(wind_speed_m_s=value)
 
@@ -217,6 +266,12 @@ class RainIntensityNumber(_BaseNumber):
     @property
     def native_value(self):
         return self._sim.rain_intensity
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        restored = await self._async_restore_number()
+        if restored is not None:
+            self._sim.set_weather(rain_intensity_fraction=restored)
 
     async def async_set_native_value(self, value: float) -> None:
         self._sim.set_weather(rain_intensity_fraction=value)

@@ -8,13 +8,15 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_interval,
 )
-from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.storage import Store
+from homeassistant.util import dt as dt_util
 
 from .const import (
     DOMAIN,
@@ -114,6 +116,8 @@ from .disturbances import ExternalTempProfile, OccupancyProfile, WeatherProfile
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.SENSOR, Platform.NUMBER, Platform.SWITCH]
+_STORAGE_VERSION = 1
+_SAVE_DELAY_SECONDS = 30
 
 _SET_WEATHER_SERVICE_SCHEMA = vol.Schema(
     {
@@ -146,6 +150,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     config = {**entry.data, **entry.options}
     simulator = HeatingSimulator(hass, entry, config)
     hass.data[DOMAIN][entry.entry_id] = simulator
+    await simulator.async_restore_persisted_state()
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     await simulator.async_start()
     entry.async_on_unload(entry.add_update_listener(_async_update_options))
@@ -315,6 +320,7 @@ class HeatingSimulator:
         self._unsub_ext_temp = None
         self._unsub_solar = None
         self._unsub_flow_temp = None
+        self._unsub_stop = None
 
         # Simulated time counter (seconds since midnight of day 0).
         # Seeded from the real wall-clock so that simulated day aligns with the
@@ -323,12 +329,22 @@ class HeatingSimulator:
         _now = _dt.datetime.now()
         _midnight = _now.replace(hour=0, minute=0, second=0, microsecond=0)
         self._sim_time_s: float = (_now - _midnight).total_seconds()
+        self._snapshot_restored: bool = False
+        self._storage = Store[dict[str, Any]](
+            hass,
+            _STORAGE_VERSION,
+            f"{DOMAIN}.{entry.entry_id}",
+        )
 
         # Disturbance profiles — rebuilt from config on each reload.
         cfg = config
         self._ext_temp_profile  = self._build_ext_temp_profile(cfg)
         self._occupancy_profile = self._build_occupancy_profile(cfg)
         self._weather_profile   = self._build_weather_profile(cfg)
+
+    @property
+    def snapshot_restored(self) -> bool:
+        return self._snapshot_restored
 
     # ------------------------------------------------------------------
     # Model factory
@@ -428,8 +444,57 @@ class HeatingSimulator:
     # Lifecycle
     # ------------------------------------------------------------------
 
+    async def async_restore_persisted_state(self) -> None:
+        """Restore the persisted simulator snapshot before entities are added."""
+        snapshot = await self._storage.async_load()
+        if not isinstance(snapshot, dict):
+            return
+        if snapshot.get("model_type") != self.model_type:
+            _LOGGER.warning(
+                "Skipping persisted state for %s because model type changed from %s to %s",
+                self.entry.entry_id,
+                snapshot.get("model_type"),
+                self.model_type,
+            )
+            return
+
+        model_state = snapshot.get("model")
+        sim_state = snapshot.get("sim")
+        if not isinstance(model_state, dict) or not isinstance(sim_state, dict):
+            _LOGGER.warning(
+                "Skipping persisted state for %s due to invalid snapshot structure",
+                self.entry.entry_id,
+            )
+            return
+
+        try:
+            self.model.from_state_dict(model_state)
+            if "pwm_on" in sim_state:
+                self._pwm_on = bool(sim_state["pwm_on"])
+            if "sim_time_s" in sim_state:
+                self._sim_time_s = max(0.0, float(sim_state["sim_time_s"]))
+            if "wind_speed_m_s" in sim_state:
+                self._weather_profile.wind_speed_m_s = max(0.0, float(sim_state["wind_speed_m_s"]))
+            if "rain_intensity_fraction" in sim_state:
+                self._weather_profile.rain_intensity_fraction = max(
+                    0.0, min(1.0, float(sim_state["rain_intensity_fraction"]))
+                )
+            self._snapshot_restored = True
+            _LOGGER.debug("Restored persisted simulator snapshot for %s", self.entry.entry_id)
+        except (TypeError, ValueError) as exc:
+            _LOGGER.warning("Could not restore persisted state for %s: %s", self.entry.entry_id, exc)
+
+    async def async_save_persisted_state(self) -> None:
+        """Persist the current simulator runtime snapshot immediately."""
+        await self._storage.async_save(self._snapshot())
+
     async def async_start(self) -> None:
         """Start the simulation loop and subscribe to input entities."""
+        self._unsub_stop = self.hass.bus.async_listen_once(
+            EVENT_HOMEASSISTANT_STOP,
+            self._async_handle_stop,
+        )
+        self._sync_bound_entity_states()
         self._unsub_interval = async_track_time_interval(
             self.hass,
             self._async_tick,
@@ -438,6 +503,7 @@ class HeatingSimulator:
         self._subscribe_ext_temp()
         self._subscribe_solar()
         self._subscribe_flow_temp()
+        self._schedule_state_save()
 
     def restore_temperatures(
         self,
@@ -452,6 +518,7 @@ class HeatingSimulator:
             self.model.restore_fabric_temp(t_fabric)
         if t_rad is not None and hasattr(self.model, "restore_radiator_temp"):
             self.model.restore_radiator_temp(t_rad)
+        self._schedule_state_save()
 
     def reset_model(
         self,
@@ -480,9 +547,11 @@ class HeatingSimulator:
             self.model.restore_radiator_temp(float(t_room))
 
         self._notify_listeners()
+        self._schedule_state_save()
 
     def async_stop(self) -> None:
         """Stop the simulation loop and unsubscribe from input entities."""
+        self.hass.async_create_task(self.async_save_persisted_state())
         if self._unsub_interval:
             self._unsub_interval()
         if self._unsub_ext_temp:
@@ -491,6 +560,8 @@ class HeatingSimulator:
             self._unsub_solar()
         if self._unsub_flow_temp:
             self._unsub_flow_temp()
+        if self._unsub_stop:
+            self._unsub_stop()
 
     def _subscribe_ext_temp(self) -> None:
         entity_id = self.config.get(CONF_EXTERNAL_TEMP, "")
@@ -534,6 +605,7 @@ class HeatingSimulator:
         self._sim_time_s += dt
         self.model.step(dt)
         self._notify_listeners()
+        self._schedule_state_save()
 
     # ------------------------------------------------------------------
     # Entity state callbacks
@@ -545,6 +617,7 @@ class HeatingSimulator:
         if new_state and new_state.state not in ("unknown", "unavailable"):
             try:
                 self.model.set_external_temperature(float(new_state.state))
+                self._schedule_state_save()
             except ValueError:
                 pass
 
@@ -554,6 +627,7 @@ class HeatingSimulator:
         if new_state and new_state.state not in ("unknown", "unavailable"):
             try:
                 self.model.set_solar_irradiance(float(new_state.state))
+                self._schedule_state_save()
             except (ValueError, AttributeError):
                 pass
 
@@ -563,6 +637,7 @@ class HeatingSimulator:
         if new_state and new_state.state not in ("unknown", "unavailable"):
             try:
                 self.model.set_flow_temperature(float(new_state.state))
+                self._schedule_state_save()
             except (ValueError, AttributeError):
                 pass
 
@@ -581,6 +656,7 @@ class HeatingSimulator:
         if rain_intensity_fraction is not None:
             self._weather_profile.rain_intensity_fraction = max(0.0, min(1.0, float(rain_intensity_fraction)))
         self._notify_listeners()
+        self._schedule_state_save()
 
     @property
     def wind_speed(self) -> float:
@@ -599,11 +675,13 @@ class HeatingSimulator:
         self.model.set_power_fraction(fraction)
         self._pwm_on = fraction > 0.0
         self._notify_listeners()
+        self._schedule_state_save()
 
     def set_pwm_switch(self, on: bool) -> None:
         self._pwm_on = on
         self.model.set_power_fraction(1.0 if on else 0.0)
         self._notify_listeners()
+        self._schedule_state_save()
 
     @property
     def pwm_on(self) -> bool:
@@ -631,3 +709,51 @@ class HeatingSimulator:
     def _notify_listeners(self) -> None:
         for cb in self._listeners:
             cb()
+
+    def _schedule_state_save(self) -> None:
+        self._storage.async_delay_save(self._snapshot, _SAVE_DELAY_SECONDS)
+
+    def _snapshot(self) -> dict[str, Any]:
+        return {
+            "version": _STORAGE_VERSION,
+            "saved_at": dt_util.utcnow().isoformat(),
+            "model_type": self.model_type,
+            "model": self.model.to_state_dict(),
+            "sim": {
+                "pwm_on": self._pwm_on,
+                "sim_time_s": self._sim_time_s,
+                "wind_speed_m_s": self._weather_profile.wind_speed_m_s,
+                "rain_intensity_fraction": self._weather_profile.rain_intensity_fraction,
+            },
+        }
+
+    def _sync_bound_entity_states(self) -> None:
+        """Apply the current state of bound HA input entities on startup."""
+        self._apply_bound_state(
+            self.config.get(CONF_EXTERNAL_TEMP, ""),
+            self.model.set_external_temperature,
+        )
+        if hasattr(self.model, "set_solar_irradiance"):
+            self._apply_bound_state(
+                self.config.get(CONF_SOLAR_ENTITY, ""),
+                self.model.set_solar_irradiance,
+            )
+        if hasattr(self.model, "set_flow_temperature"):
+            self._apply_bound_state(
+                self.config.get(CONF_FLOW_TEMP_ENTITY, ""),
+                self.model.set_flow_temperature,
+            )
+
+    def _apply_bound_state(self, entity_id: str, setter) -> None:
+        if not entity_id:
+            return
+        state = self.hass.states.get(entity_id)
+        if state is None or state.state in ("unknown", "unavailable"):
+            return
+        try:
+            setter(float(state.state))
+        except (TypeError, ValueError):
+            _LOGGER.debug("Ignoring non-numeric startup state from %s", entity_id)
+
+    async def _async_handle_stop(self, _event) -> None:
+        await self.async_save_persisted_state()
