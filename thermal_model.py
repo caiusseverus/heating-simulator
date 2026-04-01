@@ -53,6 +53,7 @@ All models expose a common interface:
 from __future__ import annotations
 import math
 from collections import deque
+from typing import Any
 
 
 # ---------------------------------------------------------------------------
@@ -191,6 +192,30 @@ class SimpleThermalModel:
 
     def restore_room_temp(self, temp: float) -> None:
         self.temperature = temp
+
+    def to_state_dict(self) -> dict[str, Any]:
+        return {
+            "temperature": self.temperature,
+            "external_temperature": self.external_temperature,
+            "effective_heater_power": self.effective_heater_power,
+            "power_setpoint": self.power_setpoint,
+            "internal_gain_watts": self.internal_gain_watts,
+            "weather_k_multiplier": self.weather_k_multiplier,
+        }
+
+    def from_state_dict(self, state: dict[str, Any]) -> None:
+        if "temperature" in state:
+            self.temperature = float(state["temperature"])
+        if "external_temperature" in state:
+            self.external_temperature = float(state["external_temperature"])
+        if "effective_heater_power" in state:
+            self.effective_heater_power = float(state["effective_heater_power"])
+        if "power_setpoint" in state:
+            self.power_setpoint = _clamp(float(state["power_setpoint"]), 0.0, 1.0)
+        if "internal_gain_watts" in state:
+            self.internal_gain_watts = float(state["internal_gain_watts"])
+        if "weather_k_multiplier" in state:
+            self.weather_k_multiplier = max(0.0, float(state["weather_k_multiplier"]))
 
     def step(self, dt: float) -> None:
         if dt <= 0:
@@ -339,6 +364,36 @@ class R2C2ThermalModel:
 
     def restore_fabric_temp(self, temp: float) -> None:
         self.t_fabric = temp
+
+    def to_state_dict(self) -> dict[str, Any]:
+        return {
+            "t_air": self.t_air,
+            "t_fabric": self.t_fabric,
+            "external_temperature": self.external_temperature,
+            "solar_irradiance": self.solar_irradiance,
+            "power_setpoint": self.power_setpoint,
+            "effective_heater_power": self.effective_heater_power,
+            "internal_gain_watts": self.internal_gain_watts,
+            "weather_k_multiplier": self.weather_k_multiplier,
+        }
+
+    def from_state_dict(self, state: dict[str, Any]) -> None:
+        if "t_air" in state:
+            self.t_air = float(state["t_air"])
+        if "t_fabric" in state:
+            self.t_fabric = float(state["t_fabric"])
+        if "external_temperature" in state:
+            self.external_temperature = float(state["external_temperature"])
+        if "solar_irradiance" in state:
+            self.solar_irradiance = max(0.0, float(state["solar_irradiance"]))
+        if "power_setpoint" in state:
+            self.power_setpoint = _clamp(float(state["power_setpoint"]), 0.0, 1.0)
+        if "effective_heater_power" in state:
+            self.effective_heater_power = float(state["effective_heater_power"])
+        if "internal_gain_watts" in state:
+            self.internal_gain_watts = float(state["internal_gain_watts"])
+        if "weather_k_multiplier" in state:
+            self.weather_k_multiplier = max(0.0, float(state["weather_k_multiplier"]))
 
     @property
     def temperature(self) -> float:
@@ -587,6 +642,57 @@ class WetRadiatorModel:
 
     def restore_radiator_temp(self, temp: float) -> None:
         self.t_rad = temp
+
+    def to_state_dict(self) -> dict[str, Any]:
+        return {
+            "t_room": self.t_room,
+            "t_rad": self.t_rad,
+            "external_temperature": self.external_temperature,
+            "flow_temperature": self.flow_temperature,
+            "valve_fraction": self.valve_fraction,
+            "effective_heater_power": self.effective_heater_power,
+            "q_in_watts": self.q_in_watts,
+            "q_out_watts": self.q_out_watts,
+            "internal_gain_watts": self.internal_gain_watts,
+            "weather_k_multiplier": self.weather_k_multiplier,
+            "pipe_queue": list(self._pipe_queue),
+            "pipe_accum": self._pipe_accum,
+        }
+
+    def from_state_dict(self, state: dict[str, Any]) -> None:
+        if "t_room" in state:
+            self.t_room = float(state["t_room"])
+        if "t_rad" in state:
+            self.t_rad = float(state["t_rad"])
+        if "external_temperature" in state:
+            self.external_temperature = float(state["external_temperature"])
+        if "flow_temperature" in state:
+            self.flow_temperature = float(state["flow_temperature"])
+        if "valve_fraction" in state:
+            self.valve_fraction = _clamp(float(state["valve_fraction"]), 0.0, 1.0)
+        if "effective_heater_power" in state:
+            self.effective_heater_power = float(state["effective_heater_power"])
+        if "q_in_watts" in state:
+            self.q_in_watts = float(state["q_in_watts"])
+        if "q_out_watts" in state:
+            self.q_out_watts = float(state["q_out_watts"])
+        if "internal_gain_watts" in state:
+            self.internal_gain_watts = float(state["internal_gain_watts"])
+        if "weather_k_multiplier" in state:
+            self.weather_k_multiplier = max(0.0, float(state["weather_k_multiplier"]))
+        pipe_queue = state.get("pipe_queue")
+        if isinstance(pipe_queue, list):
+            cleaned = [float(v) for v in pipe_queue]
+            if self.pipe_delay > 0:
+                target_len = self._pipe_queue_size
+                cleaned = cleaned[-target_len:]
+                if len(cleaned) < target_len:
+                    cleaned = ([0.0] * (target_len - len(cleaned))) + cleaned
+                self._pipe_queue = deque(cleaned)
+            else:
+                self._pipe_queue = deque()
+        if "pipe_accum" in state:
+            self._pipe_accum = max(0.0, float(state["pipe_accum"]))
 
     def step(self, dt: float) -> None:
         if dt <= 0:
@@ -906,6 +1012,75 @@ class R2C2RadiatorModel:
 
     def restore_radiator_temp(self, temp: float) -> None:
         self.t_rad = temp
+
+    def to_state_dict(self) -> dict[str, Any]:
+        return {
+            "t_air": self.t_air,
+            "t_fabric": self.t_fabric,
+            "t_rad": self.t_rad,
+            "external_temperature": self.external_temperature,
+            "solar_irradiance": self.solar_irradiance,
+            "flow_temperature": self.flow_temperature,
+            "valve_fraction": self.valve_fraction,
+            "effective_heater_power": self.effective_heater_power,
+            "q_in_watts": self.q_in_watts,
+            "q_out_watts": self.q_out_watts,
+            "q_conv_watts": self.q_conv_watts,
+            "q_rad_watts": self.q_rad_watts,
+            "solar_gain_watts": self.solar_gain_watts,
+            "fabric_heat_flux": self.fabric_heat_flux,
+            "internal_gain_watts": self.internal_gain_watts,
+            "weather_k_multiplier": self.weather_k_multiplier,
+            "pipe_queue": list(self._pipe_queue),
+            "pipe_accum": self._pipe_accum,
+        }
+
+    def from_state_dict(self, state: dict[str, Any]) -> None:
+        if "t_air" in state:
+            self.t_air = float(state["t_air"])
+        if "t_fabric" in state:
+            self.t_fabric = float(state["t_fabric"])
+        if "t_rad" in state:
+            self.t_rad = float(state["t_rad"])
+        if "external_temperature" in state:
+            self.external_temperature = float(state["external_temperature"])
+        if "solar_irradiance" in state:
+            self.solar_irradiance = max(0.0, float(state["solar_irradiance"]))
+        if "flow_temperature" in state:
+            self.flow_temperature = float(state["flow_temperature"])
+        if "valve_fraction" in state:
+            self.valve_fraction = _clamp(float(state["valve_fraction"]), 0.0, 1.0)
+        if "effective_heater_power" in state:
+            self.effective_heater_power = float(state["effective_heater_power"])
+        if "q_in_watts" in state:
+            self.q_in_watts = float(state["q_in_watts"])
+        if "q_out_watts" in state:
+            self.q_out_watts = float(state["q_out_watts"])
+        if "q_conv_watts" in state:
+            self.q_conv_watts = float(state["q_conv_watts"])
+        if "q_rad_watts" in state:
+            self.q_rad_watts = float(state["q_rad_watts"])
+        if "solar_gain_watts" in state:
+            self.solar_gain_watts = float(state["solar_gain_watts"])
+        if "fabric_heat_flux" in state:
+            self.fabric_heat_flux = float(state["fabric_heat_flux"])
+        if "internal_gain_watts" in state:
+            self.internal_gain_watts = float(state["internal_gain_watts"])
+        if "weather_k_multiplier" in state:
+            self.weather_k_multiplier = max(0.0, float(state["weather_k_multiplier"]))
+        pipe_queue = state.get("pipe_queue")
+        if isinstance(pipe_queue, list):
+            cleaned = [float(v) for v in pipe_queue]
+            if self.pipe_delay > 0:
+                target_len = self._pipe_queue_size
+                cleaned = cleaned[-target_len:]
+                if len(cleaned) < target_len:
+                    cleaned = ([0.0] * (target_len - len(cleaned))) + cleaned
+                self._pipe_queue = deque(cleaned)
+            else:
+                self._pipe_queue = deque()
+        if "pipe_accum" in state:
+            self._pipe_accum = max(0.0, float(state["pipe_accum"]))
 
     # ------------------------------------------------------------------
     # Integration

@@ -6,6 +6,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import DOMAIN, CONTROL_MODE_PWM
 from . import HeatingSimulator
@@ -21,7 +22,7 @@ async def async_setup_entry(
     async_add_entities([HeaterSwitch(simulator, entry)])
 
 
-class HeaterSwitch(SwitchEntity):
+class HeaterSwitch(SwitchEntity, RestoreEntity):
     """
     PWM heater switch.
 
@@ -45,7 +46,14 @@ class HeaterSwitch(SwitchEntity):
         self._unsub = None
 
     async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
         self._unsub = self._simulator.register_listener(self._handle_update)
+        if self._simulator.snapshot_restored:
+            return
+        last_state = await self.async_get_last_state()
+        if last_state is None or last_state.state not in ("on", "off"):
+            return
+        self._simulator.set_pwm_switch(last_state.state == "on")
 
     async def async_will_remove_from_hass(self) -> None:
         if self._unsub:

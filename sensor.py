@@ -172,6 +172,12 @@ class TemperatureSensor(_Base, RestoreSensor):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
+        if self._sim.snapshot_restored:
+            self._lagged_temp = self._sim.model.temperature
+            self._last_reported_value = self._sim.model.temperature
+            self._zigbee_last_reported_value = self._sim.model.temperature
+            self._zigbee_last_report_time = time.monotonic()
+            return
         # Attempt to restore the last known room temperature
         last = await self.async_get_last_sensor_data()
         if last is not None and last.native_value is not None:
@@ -522,6 +528,8 @@ class FabricTemperatureSensor(_Base, RestoreSensor):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
+        if self._sim.snapshot_restored:
+            return
         last = await self.async_get_last_sensor_data()
         if last is not None and last.native_value is not None:
             try:
@@ -600,6 +608,8 @@ class RadiatorTemperatureSensor(_Base, RestoreSensor):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
+        if self._sim.snapshot_restored:
+            return
         last = await self.async_get_last_sensor_data()
         if last is not None and last.native_value is not None:
             try:
