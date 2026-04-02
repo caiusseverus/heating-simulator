@@ -154,6 +154,7 @@ class TemperatureSensor(_Base, RestoreSensor):
     def __init__(self, sim, entry):
         super().__init__(sim, entry)
         self._attr_unique_id = f"{entry.entry_id}_temperature"
+        self._native_value: float | None = round(self._sim.model.temperature, 3)
 
         # --- Sensor imperfection state ---
         # Lag filter: initialised to None; set on first tick from true model temp
@@ -174,9 +175,11 @@ class TemperatureSensor(_Base, RestoreSensor):
         await super().async_added_to_hass()
         if self._sim.snapshot_restored:
             self._lagged_temp = self._sim.model.temperature
+            self._last_report_time = time.monotonic()
             self._last_reported_value = self._sim.model.temperature
             self._zigbee_last_reported_value = self._sim.model.temperature
             self._zigbee_last_report_time = time.monotonic()
+            self._native_value = self._compute_native_value()
             return
         # Attempt to restore the last known room temperature
         last = await self.async_get_last_sensor_data()
@@ -186,18 +189,29 @@ class TemperatureSensor(_Base, RestoreSensor):
                 self._sim.restore_temperatures(t_room=t_room)
                 # Seed the lag filter so it doesn't start from zero
                 self._lagged_temp = t_room
+                self._last_report_time = time.monotonic()
                 self._last_reported_value = t_room
                 # Seed Zigbee state — prevents a spurious immediate heartbeat after restart
                 self._zigbee_last_reported_value = t_room
                 self._zigbee_last_report_time = time.monotonic()
+                self._native_value = round(t_room, 3)
                 _LOGGER.debug(
                     "Restored room temperature %.2f°C from previous state", t_room
                 )
             except (ValueError, TypeError) as exc:
                 _LOGGER.warning("Could not restore room temperature: %s", exc)
+        self._native_value = self._compute_native_value()
+
+    @callback
+    def _on_update(self) -> None:
+        self._native_value = self._compute_native_value()
+        self.async_write_ha_state()
 
     @property
     def native_value(self):
+        return self._native_value
+
+    def _compute_native_value(self) -> float | None:
         cfg = self._sensor_cfg()
         noise_std   = float(cfg.get(CONF_SENSOR_NOISE_STD_DEV, DEFAULT_SENSOR_NOISE_STD_DEV))
         bias        = float(cfg.get(CONF_SENSOR_BIAS,           DEFAULT_SENSOR_BIAS))

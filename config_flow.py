@@ -269,12 +269,6 @@ STEP_R2C2_RADIATOR_SCHEMA = vol.Schema({
     vol.Required(CONF_FLOW_RATE_MAX, default=DEFAULT_FLOW_RATE_MAX): vol.All(
         vol.Coerce(float), vol.Range(min=0.001, max=1.0)
     ),
-    vol.Required(CONF_HEAT_LOSS_COEFF_RAD, default=DEFAULT_HEAT_LOSS_COEFF_RAD): vol.All(
-        vol.Coerce(float), vol.Range(min=0.001, max=2000)
-    ),
-    vol.Required(CONF_C_ROOM_RAD, default=DEFAULT_C_ROOM_RAD): vol.All(
-        vol.Coerce(float), vol.Range(min=1000, max=20_000_000)
-    ),
     vol.Required(CONF_PIPE_DELAY, default=DEFAULT_PIPE_DELAY): vol.All(
         vol.Coerce(float), vol.Range(min=0, max=600)
     ),
@@ -308,7 +302,6 @@ STEP_R2C2_RADIATOR_SCHEMA = vol.Schema({
     vol.Required(CONF_SOLAR_FIXED, default=DEFAULT_SOLAR_FIXED): vol.All(
         vol.Coerce(float), vol.Range(min=0, max=1500)
     ),
-    vol.Optional(CONF_CALIB_A,   default=0.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=10)),
     vol.Optional(CONF_CALIB_TAU, default=0.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=100000)),
     vol.Optional(CONF_CALIB_B,   default=0.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=1)),
 })
@@ -447,12 +440,6 @@ def _r2c2_radiator_model_schema(cfg: dict) -> vol.Schema:
         vol.Required(CONF_FLOW_RATE_MAX, default=float(_g(cfg, CONF_FLOW_RATE_MAX, DEFAULT_FLOW_RATE_MAX))): vol.All(
             vol.Coerce(float), vol.Range(min=0.001, max=1.0)
         ),
-        vol.Required(CONF_HEAT_LOSS_COEFF_RAD, default=float(_g(cfg, CONF_HEAT_LOSS_COEFF_RAD, DEFAULT_HEAT_LOSS_COEFF_RAD))): vol.All(
-            vol.Coerce(float), vol.Range(min=0.001, max=2000)
-        ),
-        vol.Required(CONF_C_ROOM_RAD, default=float(_g(cfg, CONF_C_ROOM_RAD, DEFAULT_C_ROOM_RAD))): vol.All(
-            vol.Coerce(float), vol.Range(min=1000, max=20_000_000)
-        ),
         vol.Required(CONF_PIPE_DELAY, default=float(_g(cfg, CONF_PIPE_DELAY, DEFAULT_PIPE_DELAY))): vol.All(
             vol.Coerce(float), vol.Range(min=0, max=600)
         ),
@@ -486,7 +473,6 @@ def _r2c2_radiator_model_schema(cfg: dict) -> vol.Schema:
         vol.Required(CONF_SOLAR_FIXED, default=float(_g(cfg, CONF_SOLAR_FIXED, DEFAULT_SOLAR_FIXED))): vol.All(
             vol.Coerce(float), vol.Range(min=0, max=1500)
         ),
-        vol.Optional(CONF_CALIB_A,   default=0.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=10)),
         vol.Optional(CONF_CALIB_TAU, default=0.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=100000)),
         vol.Optional(CONF_CALIB_B,   default=0.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=1)),
     })
@@ -518,6 +504,28 @@ def _validate_sensor_options(data: dict) -> dict:
             "sensor_min_interval must be strictly less than sensor_max_interval."
         )
     return data
+
+
+def _validate_disturbances_options(data: dict) -> dict:
+    """Cross-field validator for disturbance options."""
+    if not data.get(CONF_EXT_TEMP_PROFILE_ENABLED, False):
+        return data
+
+    min_hour = float(data.get(CONF_EXT_TEMP_MIN_HOUR, DEFAULT_EXT_TEMP_MIN_HOUR)) % 24.0
+    max_hour = float(data.get(CONF_EXT_TEMP_MAX_HOUR, DEFAULT_EXT_TEMP_MAX_HOUR)) % 24.0
+    if min_hour == max_hour:
+        raise vol.Invalid(
+            "ext_temp_profile_min_hour and ext_temp_profile_max_hour must be different."
+        )
+    return data
+
+
+def _strip_unused_r2c2_radiator_fields(data: dict) -> dict:
+    """Drop combined-model fields that are not consumed by the runtime model."""
+    cleaned = dict(data)
+    for key in (CONF_HEAT_LOSS_COEFF_RAD, CONF_C_ROOM_RAD, CONF_CALIB_A):
+        cleaned.pop(key, None)
+    return cleaned
 
 
 def _sensor_options_schema(cfg: dict) -> vol.Schema:
@@ -677,6 +685,7 @@ class HeatingSimulatorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             name = self._setup_data.get("name", "Heating Simulator")
             merged = {**self._setup_data, **user_input}
             merged = apply_calibration_r2c2_radiator(merged, merged)
+            merged = _strip_unused_r2c2_radiator_fields(merged)
             return self.async_create_entry(title=name, data=merged)
         return self.async_show_form(step_id="model_r2c2_radiator", data_schema=STEP_R2C2_RADIATOR_SCHEMA)
 
@@ -748,6 +757,7 @@ class HeatingSimulatorOptionsFlow(config_entries.OptionsFlow):
                 user_input = apply_calibration_radiator(user_input, cfg)
             elif model_type == MODEL_R2C2_RADIATOR:
                 user_input = apply_calibration_r2c2_radiator(user_input, cfg)
+                user_input = _strip_unused_r2c2_radiator_fields(user_input)
             return self._save_and_return(user_input)
         return self.async_show_form(
             step_id="thermal_model",
@@ -759,11 +769,18 @@ class HeatingSimulatorOptionsFlow(config_entries.OptionsFlow):
     async def async_step_disturbances(self, user_input=None) -> FlowResult:
         """Occupancy, external temperature profile, wind, rain."""
         cfg = self._cfg
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self._save_and_return(user_input)
+            try:
+                _validate_disturbances_options(user_input)
+            except vol.Invalid as exc:
+                errors["base"] = str(exc)
+            else:
+                return self._save_and_return(user_input)
         return self.async_show_form(
             step_id="disturbances",
             data_schema=_disturbances_options_schema(cfg),
+            errors=errors,
         )
 
     # -- Sensor degradation ------------------------------------------------
