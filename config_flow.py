@@ -318,6 +318,9 @@ def _general_options_schema(cfg: dict) -> vol.Schema:
         vol.Required(CONF_CONTROL_MODE, default=_g(cfg, CONF_CONTROL_MODE, CONTROL_MODE_LINEAR)): vol.In(
             [CONTROL_MODE_LINEAR, CONTROL_MODE_PWM]
         ),
+        # Intentionally no default from stored config here.
+        # Existing values are injected via add_suggested_values_to_schema so
+        # the field remains truly clearable in HA options flows.
         vol.Optional(CONF_EXTERNAL_TEMP): str,
         vol.Required(CONF_EXTERNAL_TEMP_FIXED, default=float(_g(cfg, CONF_EXTERNAL_TEMP_FIXED, DEFAULT_EXTERNAL_TEMP_FIXED))): vol.All(
             vol.Coerce(float), vol.Range(min=-30, max=50)
@@ -374,6 +377,8 @@ def _r2c2_model_schema(cfg: dict) -> vol.Schema:
         vol.Required(CONF_WINDOW_TRANSMITTANCE, default=float(_g(cfg, CONF_WINDOW_TRANSMITTANCE, DEFAULT_WINDOW_TRANSMITTANCE))): vol.All(
             vol.Coerce(float), vol.Range(min=0, max=1)
         ),
+        # Keep clearable entity fields default-free; suggested values are
+        # provided in async_step_thermal_model.
         vol.Optional(CONF_SOLAR_ENTITY): str,
         vol.Required(CONF_SOLAR_FIXED, default=float(_g(cfg, CONF_SOLAR_FIXED, DEFAULT_SOLAR_FIXED))): vol.All(
             vol.Coerce(float), vol.Range(min=0, max=1500)
@@ -388,6 +393,8 @@ def _radiator_model_schema(cfg: dict) -> vol.Schema:
         vol.Required(CONF_FLOW_TEMP, default=float(_g(cfg, CONF_FLOW_TEMP, DEFAULT_FLOW_TEMP))): vol.All(
             vol.Coerce(float), vol.Range(min=20, max=90)
         ),
+        # Keep clearable entity fields default-free; suggested values are
+        # provided in async_step_thermal_model.
         vol.Optional(CONF_FLOW_TEMP_ENTITY): str,
         vol.Required(CONF_C_RAD, default=float(_g(cfg, CONF_C_RAD, DEFAULT_C_RAD))): vol.All(
             vol.Coerce(float), vol.Range(min=500, max=100_000)
@@ -425,6 +432,8 @@ def _r2c2_radiator_model_schema(cfg: dict) -> vol.Schema:
         vol.Required(CONF_FLOW_TEMP, default=float(_g(cfg, CONF_FLOW_TEMP, DEFAULT_FLOW_TEMP))): vol.All(
             vol.Coerce(float), vol.Range(min=20, max=90)
         ),
+        # Keep clearable entity fields default-free; suggested values are
+        # provided in async_step_thermal_model.
         vol.Optional(CONF_FLOW_TEMP_ENTITY): str,
         vol.Required(CONF_C_RAD, default=float(_g(cfg, CONF_C_RAD, DEFAULT_C_RAD))): vol.All(
             vol.Coerce(float), vol.Range(min=500, max=100_000)
@@ -470,6 +479,8 @@ def _r2c2_radiator_model_schema(cfg: dict) -> vol.Schema:
         vol.Required(CONF_WINDOW_TRANSMITTANCE, default=float(_g(cfg, CONF_WINDOW_TRANSMITTANCE, DEFAULT_WINDOW_TRANSMITTANCE))): vol.All(
             vol.Coerce(float), vol.Range(min=0, max=1)
         ),
+        # Keep clearable entity fields default-free; suggested values are
+        # provided in async_step_thermal_model.
         vol.Optional(CONF_SOLAR_ENTITY): str,
         vol.Required(CONF_SOLAR_FIXED, default=float(_g(cfg, CONF_SOLAR_FIXED, DEFAULT_SOLAR_FIXED))): vol.All(
             vol.Coerce(float), vol.Range(min=0, max=1500)
