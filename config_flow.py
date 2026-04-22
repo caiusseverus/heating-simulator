@@ -19,7 +19,6 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
-from homeassistant.helpers.schema_config_entry_flow import add_suggested_values_to_schema
 
 from .const import (
     DOMAIN,
