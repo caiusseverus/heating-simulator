@@ -64,6 +64,16 @@ def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
 
 
+def _split_node_rates(capacitance: float, *terms: float) -> tuple[float, float, float]:
+    """Return heating, loss, and net rates from signed node heat-flow terms."""
+    if capacitance <= 0:
+        return 0.0, 0.0, 0.0
+    heating = sum(max(0.0, term) for term in terms) / capacitance
+    loss = sum(max(0.0, -term) for term in terms) / capacitance
+    net = sum(terms) / capacitance
+    return heating, loss, net
+
+
 C_WATER = 4182.0  # J/(kg·°C)
 
 # ---------------------------------------------------------------------------
@@ -455,15 +465,16 @@ class R2C2ThermalModel:
         self.fabric_heat_flux = q_fab_to_air
 
     def _update_diagnostics(self) -> None:
-        self.heating_rate = (self.effective_heater_power + self.internal_gain_watts) / self.c_air
+        q_solar_air = self.solar_gain_watts * (1.0 - self.SOLAR_FABRIC_FRACTION)
         q_inf_loss = (self.t_air - self.external_temperature) * (self.weather_k_multiplier / self.r_inf)
-        q_fab_loss = (self.t_fabric - self.external_temperature) * (self.weather_k_multiplier / self.r_ext)
-        total_loss_to_air = (q_inf_loss * self.c_air + q_fab_loss * self.c_air) / (self.c_air + self.c_fabric)
-        self.heat_loss_rate = (q_inf_loss + max(0, -self.fabric_heat_flux)) / self.c_air
-        self.net_heat_rate = (
-            (self.effective_heater_power + self.internal_gain_watts + self.solar_gain_watts)
-            - (q_inf_loss + max(0, (self.t_fabric - self.external_temperature) * (self.weather_k_multiplier / self.r_ext)))
-        ) / self.c_air
+        self.heating_rate, self.heat_loss_rate, self.net_heat_rate = _split_node_rates(
+            self.c_air,
+            self.effective_heater_power,
+            self.internal_gain_watts,
+            q_solar_air,
+            self.fabric_heat_flux,
+            -q_inf_loss,
+        )
 
     @property
     def total_heat_loss_watts(self) -> float:
@@ -1183,9 +1194,15 @@ class R2C2RadiatorModel:
 
     def _update_diagnostics(self) -> None:
         q_inf = (self.t_air - self.external_temperature) * (self.weather_k_multiplier / self.r_inf)
-        self.heating_rate    = (self.q_out_watts + self.internal_gain_watts) / self.c_air
-        self.heat_loss_rate  = (q_inf + max(0.0, -self.fabric_heat_flux)) / self.c_air
-        self.net_heat_rate   = self.heating_rate - self.heat_loss_rate
+        q_solar_air = self.solar_gain_watts * (1.0 - self.SOLAR_FABRIC_FRACTION)
+        self.heating_rate, self.heat_loss_rate, self.net_heat_rate = _split_node_rates(
+            self.c_air,
+            self.q_conv_watts,
+            self.internal_gain_watts,
+            q_solar_air,
+            self.fabric_heat_flux,
+            -q_inf,
+        )
 
     # ------------------------------------------------------------------
     # Computed properties
@@ -1222,6 +1239,8 @@ class R2C2RadiatorModel:
 
     @property
     def extra_state(self) -> dict:
+        q_inf = (self.t_air - self.external_temperature) * (self.weather_k_multiplier / self.r_inf)
+        q_fab = (self.t_fabric - self.external_temperature) * (self.weather_k_multiplier / self.r_ext)
         return {
             "radiator_temperature":      round(self.t_rad, 2),
             "fabric_temperature":        round(self.t_fabric, 2),
@@ -1235,6 +1254,8 @@ class R2C2RadiatorModel:
             "weather_k_multiplier":      round(self.weather_k_multiplier, 3),
             "solar_gain_w":              round(self.solar_gain_watts, 1),
             "fabric_to_air_flux_w":      round(self.fabric_heat_flux, 1),
+            "infiltration_loss_w":       round(q_inf, 1),
+            "fabric_loss_w":             round(q_fab, 1),
             "total_heat_loss_w":         round(self.total_heat_loss_watts, 1),
             "effective_u_value_W_per_C": round(self.effective_u_value, 2),
             "nominal_output_w_at_dt50":  round(self.nominal_output_at_dt50, 1),

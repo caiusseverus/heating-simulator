@@ -49,6 +49,7 @@ from .const import (
     CONF_C_RAD,
     CONF_K_RAD,
     CONF_RAD_EXPONENT,
+    CONF_RAD_CONVECTIVE_FRACTION,
     CONF_FLOW_RATE_MAX,
     CONF_HEAT_LOSS_COEFF_RAD,
     CONF_C_ROOM_RAD,
@@ -80,6 +81,7 @@ from .const import (
     DEFAULT_C_RAD,
     DEFAULT_K_RAD,
     DEFAULT_RAD_EXPONENT,
+    DEFAULT_RAD_CONVECTIVE_FRACTION,
     DEFAULT_FLOW_RATE_MAX,
     DEFAULT_HEAT_LOSS_COEFF_RAD,
     DEFAULT_C_ROOM_RAD,
@@ -122,8 +124,6 @@ _SAVE_DELAY_SECONDS = 30
 _SET_WEATHER_SERVICE_SCHEMA = vol.Schema(
     {
         vol.Optional("device_id"): vol.Any(str, [str]),
-        vol.Optional("entity_id"): vol.Any(str, [str]),
-        vol.Optional("area_id"): vol.Any(str, [str]),
         vol.Optional("wind_speed_m_s"): vol.All(vol.Coerce(float), vol.Range(min=0, max=50)),
         vol.Optional("rain_intensity_fraction"): vol.All(vol.Coerce(float), vol.Range(min=0, max=1)),
     }
@@ -132,8 +132,6 @@ _SET_WEATHER_SERVICE_SCHEMA = vol.Schema(
 _RESET_SERVICE_SCHEMA = vol.Schema(
     {
         vol.Optional("device_id"): vol.Any(str, [str]),
-        vol.Optional("entity_id"): vol.Any(str, [str]),
-        vol.Optional("area_id"): vol.Any(str, [str]),
         vol.Optional("preset"): vol.In(
             [PRESET_COLD_START, PRESET_OVERNIGHT, PRESET_ROOM_TEMPERATURE]
         ),
@@ -266,13 +264,23 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    simulator: HeatingSimulator = hass.data[DOMAIN].pop(entry.entry_id)
-    simulator.async_stop()
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if not unload_ok:
+        return False
+
+    domain_data = hass.data.get(DOMAIN)
+    simulator: HeatingSimulator | None = None
+    if domain_data is not None:
+        simulator = domain_data.get(entry.entry_id)
+    if simulator is not None:
+        simulator.async_stop()
+    if domain_data is not None:
+        domain_data.pop(entry.entry_id, None)
     # Remove the service only when the last instance is unloaded
-    if not hass.data[DOMAIN]:
+    if domain_data is not None and not domain_data:
         hass.services.async_remove(DOMAIN, ACTION_RESET)
         hass.services.async_remove(DOMAIN, ACTION_SET_WEATHER)
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    return True
 
 
 async def _async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -357,6 +365,9 @@ class HeatingSimulator:
                 c_radiator=float(cfg.get(CONF_C_RAD, DEFAULT_C_RAD)),
                 k_radiator=float(cfg.get(CONF_K_RAD, DEFAULT_K_RAD)),
                 radiator_exponent=float(cfg.get(CONF_RAD_EXPONENT, DEFAULT_RAD_EXPONENT)),
+                radiator_convective_fraction=float(
+                    cfg.get(CONF_RAD_CONVECTIVE_FRACTION, DEFAULT_RAD_CONVECTIVE_FRACTION)
+                ),
                 flow_rate_max=float(cfg.get(CONF_FLOW_RATE_MAX, DEFAULT_FLOW_RATE_MAX)),
                 pipe_delay=float(cfg.get(CONF_PIPE_DELAY, DEFAULT_PIPE_DELAY)),
                 valve_characteristic=cfg.get(CONF_VALVE_CHARACTERISTIC, DEFAULT_VALVE_CHARACTERISTIC),
@@ -611,35 +622,46 @@ class HeatingSimulator:
     # Entity state callbacks
     # ------------------------------------------------------------------
 
+    def _apply_state_event_update(self, event, setter, label: str) -> None:
+        new_state = event.data.get("new_state")
+        if new_state is None or new_state.state in ("unknown", "unavailable"):
+            return
+        entity_id = getattr(new_state, "entity_id", "<unknown>")
+        try:
+            setter(float(new_state.state))
+            self._schedule_state_save()
+        except (TypeError, ValueError, AttributeError) as exc:
+            _LOGGER.debug(
+                "Ignoring %s update from %s with state %r: %s",
+                label,
+                entity_id,
+                new_state.state,
+                exc,
+            )
+
     @callback
     def _async_ext_temp_changed(self, event) -> None:
-        new_state = event.data.get("new_state")
-        if new_state and new_state.state not in ("unknown", "unavailable"):
-            try:
-                self.model.set_external_temperature(float(new_state.state))
-                self._schedule_state_save()
-            except ValueError:
-                pass
+        self._apply_state_event_update(
+            event,
+            self.model.set_external_temperature,
+            "external temperature",
+        )
 
     @callback
     def _async_solar_changed(self, event) -> None:
-        new_state = event.data.get("new_state")
-        if new_state and new_state.state not in ("unknown", "unavailable"):
-            try:
-                self.model.set_solar_irradiance(float(new_state.state))
-                self._schedule_state_save()
-            except (ValueError, AttributeError):
-                pass
+        self._apply_state_event_update(
+            event,
+            self.model.set_solar_irradiance,
+            "solar irradiance",
+        )
 
     @callback
     def _async_flow_temp_changed(self, event) -> None:
-        new_state = event.data.get("new_state")
-        if new_state and new_state.state not in ("unknown", "unavailable"):
-            try:
-                self.model.set_flow_temperature(float(new_state.state))
-                self._schedule_state_save()
-            except (ValueError, AttributeError):
-                pass
+        self._apply_state_event_update(
+            event,
+            self.model.set_flow_temperature,
+            "flow temperature",
+        )
 
     # ------------------------------------------------------------------
     # Weather control (live update without reload)

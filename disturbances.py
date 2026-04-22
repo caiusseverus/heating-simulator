@@ -89,6 +89,8 @@ class ExternalTempProfile:
             warm_duration = (24.0 - min_h) + max_h
 
         cool_duration = 24.0 - warm_duration
+        if warm_duration <= 0.0 or cool_duration <= 0.0:
+            return self.base_temp
 
         # Hours elapsed since the trough
         hours_since_min = (hour - min_h) % 24.0

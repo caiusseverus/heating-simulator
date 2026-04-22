@@ -269,12 +269,6 @@ STEP_R2C2_RADIATOR_SCHEMA = vol.Schema({
     vol.Required(CONF_FLOW_RATE_MAX, default=DEFAULT_FLOW_RATE_MAX): vol.All(
         vol.Coerce(float), vol.Range(min=0.001, max=1.0)
     ),
-    vol.Required(CONF_HEAT_LOSS_COEFF_RAD, default=DEFAULT_HEAT_LOSS_COEFF_RAD): vol.All(
-        vol.Coerce(float), vol.Range(min=0.001, max=2000)
-    ),
-    vol.Required(CONF_C_ROOM_RAD, default=DEFAULT_C_ROOM_RAD): vol.All(
-        vol.Coerce(float), vol.Range(min=1000, max=20_000_000)
-    ),
     vol.Required(CONF_PIPE_DELAY, default=DEFAULT_PIPE_DELAY): vol.All(
         vol.Coerce(float), vol.Range(min=0, max=600)
     ),
@@ -308,7 +302,6 @@ STEP_R2C2_RADIATOR_SCHEMA = vol.Schema({
     vol.Required(CONF_SOLAR_FIXED, default=DEFAULT_SOLAR_FIXED): vol.All(
         vol.Coerce(float), vol.Range(min=0, max=1500)
     ),
-    vol.Optional(CONF_CALIB_A,   default=0.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=10)),
     vol.Optional(CONF_CALIB_TAU, default=0.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=100000)),
     vol.Optional(CONF_CALIB_B,   default=0.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=1)),
 })
@@ -324,7 +317,10 @@ def _general_options_schema(cfg: dict) -> vol.Schema:
         vol.Required(CONF_CONTROL_MODE, default=_g(cfg, CONF_CONTROL_MODE, CONTROL_MODE_LINEAR)): vol.In(
             [CONTROL_MODE_LINEAR, CONTROL_MODE_PWM]
         ),
-        vol.Optional(CONF_EXTERNAL_TEMP, default=_g(cfg, CONF_EXTERNAL_TEMP, "")): str,
+        # Intentionally no default from stored config here.
+        # Existing values are injected via add_suggested_values_to_schema so
+        # the field remains truly clearable in HA options flows.
+        vol.Optional(CONF_EXTERNAL_TEMP): str,
         vol.Required(CONF_EXTERNAL_TEMP_FIXED, default=float(_g(cfg, CONF_EXTERNAL_TEMP_FIXED, DEFAULT_EXTERNAL_TEMP_FIXED))): vol.All(
             vol.Coerce(float), vol.Range(min=-30, max=50)
         ),
@@ -380,7 +376,9 @@ def _r2c2_model_schema(cfg: dict) -> vol.Schema:
         vol.Required(CONF_WINDOW_TRANSMITTANCE, default=float(_g(cfg, CONF_WINDOW_TRANSMITTANCE, DEFAULT_WINDOW_TRANSMITTANCE))): vol.All(
             vol.Coerce(float), vol.Range(min=0, max=1)
         ),
-        vol.Optional(CONF_SOLAR_ENTITY, default=_g(cfg, CONF_SOLAR_ENTITY, "")): str,
+        # Keep clearable entity fields default-free; suggested values are
+        # provided in async_step_thermal_model.
+        vol.Optional(CONF_SOLAR_ENTITY): str,
         vol.Required(CONF_SOLAR_FIXED, default=float(_g(cfg, CONF_SOLAR_FIXED, DEFAULT_SOLAR_FIXED))): vol.All(
             vol.Coerce(float), vol.Range(min=0, max=1500)
         ),
@@ -394,7 +392,9 @@ def _radiator_model_schema(cfg: dict) -> vol.Schema:
         vol.Required(CONF_FLOW_TEMP, default=float(_g(cfg, CONF_FLOW_TEMP, DEFAULT_FLOW_TEMP))): vol.All(
             vol.Coerce(float), vol.Range(min=20, max=90)
         ),
-        vol.Optional(CONF_FLOW_TEMP_ENTITY, default=_g(cfg, CONF_FLOW_TEMP_ENTITY, "")): str,
+        # Keep clearable entity fields default-free; suggested values are
+        # provided in async_step_thermal_model.
+        vol.Optional(CONF_FLOW_TEMP_ENTITY): str,
         vol.Required(CONF_C_RAD, default=float(_g(cfg, CONF_C_RAD, DEFAULT_C_RAD))): vol.All(
             vol.Coerce(float), vol.Range(min=500, max=100_000)
         ),
@@ -431,7 +431,9 @@ def _r2c2_radiator_model_schema(cfg: dict) -> vol.Schema:
         vol.Required(CONF_FLOW_TEMP, default=float(_g(cfg, CONF_FLOW_TEMP, DEFAULT_FLOW_TEMP))): vol.All(
             vol.Coerce(float), vol.Range(min=20, max=90)
         ),
-        vol.Optional(CONF_FLOW_TEMP_ENTITY, default=_g(cfg, CONF_FLOW_TEMP_ENTITY, "")): str,
+        # Keep clearable entity fields default-free; suggested values are
+        # provided in async_step_thermal_model.
+        vol.Optional(CONF_FLOW_TEMP_ENTITY): str,
         vol.Required(CONF_C_RAD, default=float(_g(cfg, CONF_C_RAD, DEFAULT_C_RAD))): vol.All(
             vol.Coerce(float), vol.Range(min=500, max=100_000)
         ),
@@ -446,12 +448,6 @@ def _r2c2_radiator_model_schema(cfg: dict) -> vol.Schema:
         ),
         vol.Required(CONF_FLOW_RATE_MAX, default=float(_g(cfg, CONF_FLOW_RATE_MAX, DEFAULT_FLOW_RATE_MAX))): vol.All(
             vol.Coerce(float), vol.Range(min=0.001, max=1.0)
-        ),
-        vol.Required(CONF_HEAT_LOSS_COEFF_RAD, default=float(_g(cfg, CONF_HEAT_LOSS_COEFF_RAD, DEFAULT_HEAT_LOSS_COEFF_RAD))): vol.All(
-            vol.Coerce(float), vol.Range(min=0.001, max=2000)
-        ),
-        vol.Required(CONF_C_ROOM_RAD, default=float(_g(cfg, CONF_C_ROOM_RAD, DEFAULT_C_ROOM_RAD))): vol.All(
-            vol.Coerce(float), vol.Range(min=1000, max=20_000_000)
         ),
         vol.Required(CONF_PIPE_DELAY, default=float(_g(cfg, CONF_PIPE_DELAY, DEFAULT_PIPE_DELAY))): vol.All(
             vol.Coerce(float), vol.Range(min=0, max=600)
@@ -482,11 +478,12 @@ def _r2c2_radiator_model_schema(cfg: dict) -> vol.Schema:
         vol.Required(CONF_WINDOW_TRANSMITTANCE, default=float(_g(cfg, CONF_WINDOW_TRANSMITTANCE, DEFAULT_WINDOW_TRANSMITTANCE))): vol.All(
             vol.Coerce(float), vol.Range(min=0, max=1)
         ),
-        vol.Optional(CONF_SOLAR_ENTITY, default=_g(cfg, CONF_SOLAR_ENTITY, "")): str,
+        # Keep clearable entity fields default-free; suggested values are
+        # provided in async_step_thermal_model.
+        vol.Optional(CONF_SOLAR_ENTITY): str,
         vol.Required(CONF_SOLAR_FIXED, default=float(_g(cfg, CONF_SOLAR_FIXED, DEFAULT_SOLAR_FIXED))): vol.All(
             vol.Coerce(float), vol.Range(min=0, max=1500)
         ),
-        vol.Optional(CONF_CALIB_A,   default=0.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=10)),
         vol.Optional(CONF_CALIB_TAU, default=0.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=100000)),
         vol.Optional(CONF_CALIB_B,   default=0.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=1)),
     })
@@ -518,6 +515,28 @@ def _validate_sensor_options(data: dict) -> dict:
             "sensor_min_interval must be strictly less than sensor_max_interval."
         )
     return data
+
+
+def _validate_disturbances_options(data: dict) -> dict:
+    """Cross-field validator for disturbance options."""
+    if not data.get(CONF_EXT_TEMP_PROFILE_ENABLED, False):
+        return data
+
+    min_hour = float(data.get(CONF_EXT_TEMP_MIN_HOUR, DEFAULT_EXT_TEMP_MIN_HOUR)) % 24.0
+    max_hour = float(data.get(CONF_EXT_TEMP_MAX_HOUR, DEFAULT_EXT_TEMP_MAX_HOUR)) % 24.0
+    if min_hour == max_hour:
+        raise vol.Invalid(
+            "ext_temp_profile_min_hour and ext_temp_profile_max_hour must be different."
+        )
+    return data
+
+
+def _strip_unused_r2c2_radiator_fields(data: dict) -> dict:
+    """Drop combined-model fields that are not consumed by the runtime model."""
+    cleaned = dict(data)
+    for key in (CONF_HEAT_LOSS_COEFF_RAD, CONF_C_ROOM_RAD, CONF_CALIB_A):
+        cleaned.pop(key, None)
+    return cleaned
 
 
 def _sensor_options_schema(cfg: dict) -> vol.Schema:
@@ -677,6 +696,7 @@ class HeatingSimulatorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             name = self._setup_data.get("name", "Heating Simulator")
             merged = {**self._setup_data, **user_input}
             merged = apply_calibration_r2c2_radiator(merged, merged)
+            merged = _strip_unused_r2c2_radiator_fields(merged)
             return self.async_create_entry(title=name, data=merged)
         return self.async_show_form(step_id="model_r2c2_radiator", data_schema=STEP_R2C2_RADIATOR_SCHEMA)
 
@@ -727,10 +747,20 @@ class HeatingSimulatorOptionsFlow(config_entries.OptionsFlow):
         """Control mode, external temperature, update interval."""
         cfg = self._cfg
         if user_input is not None:
+            # Keep clearable entity-id fields removable: HA may omit optional
+            # empty fields from user_input, so preserve explicit clearing.
+            user_input = dict(user_input)
+            user_input = self._normalise_clearable_text_fields(user_input, [CONF_EXTERNAL_TEMP])
+            user_input.setdefault(CONF_EXTERNAL_TEMP, "")
             return self._save_and_return(user_input)
+        schema = _general_options_schema(cfg)
+        schema = self.add_suggested_values_to_schema(
+            schema,
+            {CONF_EXTERNAL_TEMP: _g(cfg, CONF_EXTERNAL_TEMP, "")},
+        )
         return self.async_show_form(
             step_id="general",
-            data_schema=_general_options_schema(cfg),
+            data_schema=schema,
         )
 
     # -- Thermal model parameters ------------------------------------------
@@ -739,19 +769,43 @@ class HeatingSimulatorOptionsFlow(config_entries.OptionsFlow):
         """Model physics parameters, pre-populated from current config."""
         cfg = self._cfg
         if user_input is not None:
+            user_input = dict(user_input)
             model_type = cfg.get(CONF_MODEL_TYPE, MODEL_SIMPLE)
             if model_type == MODEL_SIMPLE:
                 user_input = apply_calibration_simple(user_input, cfg)
             elif model_type == MODEL_R2C2:
+                user_input = self._normalise_clearable_text_fields(user_input, [CONF_SOLAR_ENTITY])
+                user_input.setdefault(CONF_SOLAR_ENTITY, "")
                 user_input = apply_calibration_r2c2(user_input, cfg)
             elif model_type == MODEL_RADIATOR:
+                user_input = self._normalise_clearable_text_fields(user_input, [CONF_FLOW_TEMP_ENTITY])
+                user_input.setdefault(CONF_FLOW_TEMP_ENTITY, "")
                 user_input = apply_calibration_radiator(user_input, cfg)
             elif model_type == MODEL_R2C2_RADIATOR:
+                user_input = self._normalise_clearable_text_fields(
+                    user_input,
+                    [CONF_SOLAR_ENTITY, CONF_FLOW_TEMP_ENTITY],
+                )
+                user_input.setdefault(CONF_SOLAR_ENTITY, "")
+                user_input.setdefault(CONF_FLOW_TEMP_ENTITY, "")
                 user_input = apply_calibration_r2c2_radiator(user_input, cfg)
+                user_input = _strip_unused_r2c2_radiator_fields(user_input)
             return self._save_and_return(user_input)
+        schema = _thermal_model_schema_for_cfg(cfg)
+        model_type = cfg.get(CONF_MODEL_TYPE, MODEL_SIMPLE)
+        suggested_values: dict[str, Any] = {}
+        if model_type == MODEL_R2C2:
+            suggested_values[CONF_SOLAR_ENTITY] = _g(cfg, CONF_SOLAR_ENTITY, "")
+        elif model_type == MODEL_RADIATOR:
+            suggested_values[CONF_FLOW_TEMP_ENTITY] = _g(cfg, CONF_FLOW_TEMP_ENTITY, "")
+        elif model_type == MODEL_R2C2_RADIATOR:
+            suggested_values[CONF_SOLAR_ENTITY] = _g(cfg, CONF_SOLAR_ENTITY, "")
+            suggested_values[CONF_FLOW_TEMP_ENTITY] = _g(cfg, CONF_FLOW_TEMP_ENTITY, "")
+        if suggested_values:
+            schema = self.add_suggested_values_to_schema(schema, suggested_values)
         return self.async_show_form(
             step_id="thermal_model",
-            data_schema=_thermal_model_schema_for_cfg(cfg),
+            data_schema=schema,
         )
 
     # -- Disturbances ------------------------------------------------------
@@ -759,11 +813,18 @@ class HeatingSimulatorOptionsFlow(config_entries.OptionsFlow):
     async def async_step_disturbances(self, user_input=None) -> FlowResult:
         """Occupancy, external temperature profile, wind, rain."""
         cfg = self._cfg
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self._save_and_return(user_input)
+            try:
+                _validate_disturbances_options(user_input)
+            except vol.Invalid as exc:
+                errors["base"] = str(exc)
+            else:
+                return self._save_and_return(user_input)
         return self.async_show_form(
             step_id="disturbances",
             data_schema=_disturbances_options_schema(cfg),
+            errors=errors,
         )
 
     # -- Sensor degradation ------------------------------------------------
@@ -797,6 +858,20 @@ class HeatingSimulatorOptionsFlow(config_entries.OptionsFlow):
         """
         updated = {**self._config_entry.options, **new_values}
         return self.async_create_entry(title="", data=updated)
+
+    @staticmethod
+    def _normalise_clearable_text_fields(data: dict, keys: list[str]) -> dict:
+        """Normalise clearable text/entity fields so blanks become empty strings."""
+        normalised = dict(data)
+        for key in keys:
+            if key in normalised:
+                value = normalised.get(key)
+                if value is None:
+                    normalised[key] = ""
+                else:
+                    value_s = str(value).strip()
+                    normalised[key] = value_s if value_s else ""
+        return normalised
 
 
 # ---------------------------------------------------------------------------
