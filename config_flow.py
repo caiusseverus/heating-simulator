@@ -755,7 +755,7 @@ class HeatingSimulatorOptionsFlow(config_entries.OptionsFlow):
             user_input.setdefault(CONF_EXTERNAL_TEMP, "")
             return self._save_and_return(user_input)
         schema = _general_options_schema(cfg)
-        schema = add_suggested_values_to_schema(
+        schema = self.add_suggested_values_to_schema(
             schema,
             {CONF_EXTERNAL_TEMP: _g(cfg, CONF_EXTERNAL_TEMP, "")},
         )
@@ -803,7 +803,7 @@ class HeatingSimulatorOptionsFlow(config_entries.OptionsFlow):
             suggested_values[CONF_SOLAR_ENTITY] = _g(cfg, CONF_SOLAR_ENTITY, "")
             suggested_values[CONF_FLOW_TEMP_ENTITY] = _g(cfg, CONF_FLOW_TEMP_ENTITY, "")
         if suggested_values:
-            schema = add_suggested_values_to_schema(schema, suggested_values)
+            schema = self.add_suggested_values_to_schema(schema, suggested_values)
         return self.async_show_form(
             step_id="thermal_model",
             data_schema=schema,
