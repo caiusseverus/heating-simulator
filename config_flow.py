@@ -736,6 +736,10 @@ class HeatingSimulatorOptionsFlow(config_entries.OptionsFlow):
         """Control mode, external temperature, update interval."""
         cfg = self._cfg
         if user_input is not None:
+            # Keep clearable entity-id fields removable: HA may omit optional
+            # empty fields from user_input, so preserve explicit clearing.
+            user_input = dict(user_input)
+            user_input.setdefault(CONF_EXTERNAL_TEMP, "")
             return self._save_and_return(user_input)
         return self.async_show_form(
             step_id="general",
@@ -748,14 +752,19 @@ class HeatingSimulatorOptionsFlow(config_entries.OptionsFlow):
         """Model physics parameters, pre-populated from current config."""
         cfg = self._cfg
         if user_input is not None:
+            user_input = dict(user_input)
             model_type = cfg.get(CONF_MODEL_TYPE, MODEL_SIMPLE)
             if model_type == MODEL_SIMPLE:
                 user_input = apply_calibration_simple(user_input, cfg)
             elif model_type == MODEL_R2C2:
+                user_input.setdefault(CONF_SOLAR_ENTITY, "")
                 user_input = apply_calibration_r2c2(user_input, cfg)
             elif model_type == MODEL_RADIATOR:
+                user_input.setdefault(CONF_FLOW_TEMP_ENTITY, "")
                 user_input = apply_calibration_radiator(user_input, cfg)
             elif model_type == MODEL_R2C2_RADIATOR:
+                user_input.setdefault(CONF_SOLAR_ENTITY, "")
+                user_input.setdefault(CONF_FLOW_TEMP_ENTITY, "")
                 user_input = apply_calibration_r2c2_radiator(user_input, cfg)
                 user_input = _strip_unused_r2c2_radiator_fields(user_input)
             return self._save_and_return(user_input)
