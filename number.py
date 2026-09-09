@@ -61,7 +61,7 @@ class _BaseNumber(NumberEntity, RestoreEntity):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        self._unsub = self._sim.register_listener(self._on_update)
+        self._unsub = self._sim.register_listener(self._on_update, control=True)
 
     async def async_will_remove_from_hass(self) -> None:
         if self._unsub:
@@ -139,13 +139,15 @@ class ExternalTempOverride(_BaseNumber):
         await super().async_added_to_hass()
         restored = await self._async_restore_number()
         if restored is not None:
+            self._sim._advance_to()
             self._sim.model.set_external_temperature(restored)
-            self._sim._notify_listeners()
+            self._sim._notify_control_listeners()
             self._sim._schedule_state_save()
 
     async def async_set_native_value(self, value: float) -> None:
+        self._sim._advance_to()
         self._sim.model.set_external_temperature(value)
-        self._sim._notify_listeners()
+        self._sim._notify_control_listeners()
 
 
 class SolarIrradianceOverride(_BaseNumber):
@@ -170,13 +172,15 @@ class SolarIrradianceOverride(_BaseNumber):
         await super().async_added_to_hass()
         restored = await self._async_restore_number()
         if restored is not None:
+            self._sim._advance_to()
             self._sim.model.set_solar_irradiance(restored)
-            self._sim._notify_listeners()
+            self._sim._notify_control_listeners()
             self._sim._schedule_state_save()
 
     async def async_set_native_value(self, value: float) -> None:
+        self._sim._advance_to()
         self._sim.model.set_solar_irradiance(value)
-        self._sim._notify_listeners()
+        self._sim._notify_control_listeners()
 
 
 class FlowTempOverride(_BaseNumber):
@@ -201,13 +205,15 @@ class FlowTempOverride(_BaseNumber):
         await super().async_added_to_hass()
         restored = await self._async_restore_number()
         if restored is not None:
+            self._sim._advance_to()
             self._sim.model.set_flow_temperature(restored)
-            self._sim._notify_listeners()
+            self._sim._notify_control_listeners()
             self._sim._schedule_state_save()
 
     async def async_set_native_value(self, value: float) -> None:
+        self._sim._advance_to()
         self._sim.model.set_flow_temperature(value)
-        self._sim._notify_listeners()
+        self._sim._notify_control_listeners()
 
 
 class WindSpeedNumber(_BaseNumber):

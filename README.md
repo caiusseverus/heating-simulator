@@ -63,3 +63,15 @@ For model-specific parameters, calibration, sensor imperfection, and disturbance
 | [docs/configuration.md](docs/configuration.md) | All configuration parameters with descriptions and recommended values |
 | [docs/entities.md](docs/entities.md) | Full entity reference (sensors, numbers, switches) |
 | [docs/usage-examples.md](docs/usage-examples.md) | Automation examples, dashboard YAML, testing workflows |
+
+### Switch timing and sensor publication
+
+The update interval controls scheduled sensor publication. PWM and linear power changes
+advance the thermal model to the command receipt time using the previous power state,
+then apply the new state. Fractional-second ON/OFF durations are retained, including
+pulses entirely between publications. Switches and input controls update immediately;
+sensors publish on the configured interval (and on an explicit model reset).
+
+The existing thermal equations and radiator transport delays still determine physical
+response and numerical accuracy; exact command timing does not imply identical final
+temperatures for pulses at different times.
