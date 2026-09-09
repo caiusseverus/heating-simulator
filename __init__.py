@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import timedelta
 from typing import Any
 
@@ -297,10 +298,10 @@ class HeatingSimulator:
 
     Responsibilities:
     - Instantiate the correct ThermalModel subclass from config.
-    - Tick the model on a fixed interval.
+    - Advance physics at input changes and scheduled publications.
     - Track external temperature, solar irradiance, and flow temperature entities.
     - Provide a unified set_power_fraction / set_pwm_switch API for entities.
-    - Notify listeners (push, not poll) on every tick and on input changes.
+    - Publish sensors on each tick; notify controls immediately on input changes.
     """
 
     def __init__(
@@ -324,6 +325,8 @@ class HeatingSimulator:
 
         self._pwm_on: bool = False
         self._listeners: list = []
+        self._control_listeners: list = []
+        self._last_update_time: float | None = None
         self._unsub_interval = None
         self._unsub_ext_temp = None
         self._unsub_solar = None
@@ -506,6 +509,7 @@ class HeatingSimulator:
             self._async_handle_stop,
         )
         self._sync_bound_entity_states()
+        self._last_update_time = time.monotonic()
         self._unsub_interval = async_track_time_interval(
             self.hass,
             self._async_tick,
@@ -539,6 +543,7 @@ class HeatingSimulator:
         preset: str | None = None,
     ) -> None:
         """Reset the simulation to a known state."""
+        self._advance_to()
         if preset is not None and preset in RESET_PRESETS:
             p = RESET_PRESETS[preset]
             t_room   = p["t_room"]   if t_room   is None else t_room
@@ -562,6 +567,8 @@ class HeatingSimulator:
 
     def async_stop(self) -> None:
         """Stop the simulation loop and unsubscribe from input entities."""
+        self._advance_to()
+        self._last_update_time = None
         self.hass.async_create_task(self.async_save_persisted_state())
         if self._unsub_interval:
             self._unsub_interval()
@@ -600,7 +607,19 @@ class HeatingSimulator:
     # ------------------------------------------------------------------
 
     async def _async_tick(self, now) -> None:
-        dt = float(self.update_interval)
+        self._advance_to()
+        self._notify_listeners()
+        self._schedule_state_save()
+
+    def _advance_to(self, now: float | None = None) -> None:
+        """Integrate elapsed time with the inputs that held before this event."""
+        if self._last_update_time is None:
+            return  # Startup/restoration or stopped; never simulate offline time.
+        if now is None:
+            now = time.monotonic()
+        dt = now - self._last_update_time
+        if dt <= 0.0:
+            return
 
         # F-11: external temperature profile
         if self._ext_temp_profile.enabled:
@@ -615,8 +634,7 @@ class HeatingSimulator:
 
         self._sim_time_s += dt
         self.model.step(dt)
-        self._notify_listeners()
-        self._schedule_state_save()
+        self._last_update_time = now
 
     # ------------------------------------------------------------------
     # Entity state callbacks
@@ -628,7 +646,9 @@ class HeatingSimulator:
             return
         entity_id = getattr(new_state, "entity_id", "<unknown>")
         try:
-            setter(float(new_state.state))
+            value = float(new_state.state)
+            self._advance_to()
+            setter(value)
             self._schedule_state_save()
         except (TypeError, ValueError, AttributeError) as exc:
             _LOGGER.debug(
@@ -673,11 +693,12 @@ class HeatingSimulator:
         rain_intensity_fraction: float | None = None,
     ) -> None:
         """Update weather disturbance inputs live."""
+        self._advance_to()
         if wind_speed_m_s is not None:
             self._weather_profile.wind_speed_m_s = max(0.0, float(wind_speed_m_s))
         if rain_intensity_fraction is not None:
             self._weather_profile.rain_intensity_fraction = max(0.0, min(1.0, float(rain_intensity_fraction)))
-        self._notify_listeners()
+        self._notify_control_listeners()
         self._schedule_state_save()
 
     @property
@@ -694,15 +715,17 @@ class HeatingSimulator:
 
     def set_linear_power(self, percent: float) -> None:
         fraction = max(0.0, min(1.0, percent / 100.0))
+        self._advance_to()
         self.model.set_power_fraction(fraction)
         self._pwm_on = fraction > 0.0
-        self._notify_listeners()
+        self._notify_control_listeners()
         self._schedule_state_save()
 
     def set_pwm_switch(self, on: bool) -> None:
+        self._advance_to()
         self._pwm_on = on
         self.model.set_power_fraction(1.0 if on else 0.0)
-        self._notify_listeners()
+        self._notify_control_listeners()
         self._schedule_state_save()
 
     @property
@@ -717,19 +740,27 @@ class HeatingSimulator:
     # Listeners
     # ------------------------------------------------------------------
 
-    def register_listener(self, cb) -> callback:
-        self._listeners.append(cb)
+    def register_listener(self, cb, *, control: bool = False) -> callback:
+        """Subscribe to publications, or also to immediate control changes."""
+        listeners = self._control_listeners if control else self._listeners
+        listeners.append(cb)
 
         @callback
         def unsubscribe():
-            if cb in self._listeners:
-                self._listeners.remove(cb)
+            if cb in listeners:
+                listeners.remove(cb)
 
         return unsubscribe
 
     @callback
+    def _notify_control_listeners(self) -> None:
+        for cb in tuple(self._control_listeners):
+            cb()
+
+    @callback
     def _notify_listeners(self) -> None:
-        for cb in self._listeners:
+        self._notify_control_listeners()
+        for cb in tuple(self._listeners):
             cb()
 
     def _schedule_state_save(self) -> None:
@@ -778,4 +809,6 @@ class HeatingSimulator:
             _LOGGER.debug("Ignoring non-numeric startup state from %s", entity_id)
 
     async def _async_handle_stop(self, _event) -> None:
+        self._advance_to()
+        self._last_update_time = None
         await self.async_save_persisted_state()

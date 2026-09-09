@@ -47,7 +47,7 @@ class HeaterSwitch(SwitchEntity, RestoreEntity):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        self._unsub = self._simulator.register_listener(self._handle_update)
+        self._unsub = self._simulator.register_listener(self._handle_update, control=True)
         if self._simulator.snapshot_restored:
             return
         last_state = await self.async_get_last_state()
